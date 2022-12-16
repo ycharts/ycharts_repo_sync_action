@@ -21,6 +21,7 @@ then
   return -1
 fi
 
+INPUT_DESTINATION_HEAD_BRANCH_PREFIX="$INPUT_DESTINATION_HEAD_BRANCH"
 if [ "$INPUT_TIMESTAMP_HEAD_BRANCH" = true ]
 then
   INPUT_DESTINATION_HEAD_BRANCH="$INPUT_DESTINATION_HEAD_BRANCH-$(date +%Y%m%d%H%M%S)"
@@ -56,6 +57,11 @@ git add .
 if git status | grep -q "Changes to be committed"
 then
   git commit --message "Update from https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+  echo "Closing existing PRs"
+  gh pr list --search "is:pr is:open $INPUT_DESTINATION_HEAD_BRANCH_PREFIX in:title"| while IFS= read -r line; do
+    prid=$(echo $line | awk '{print $1;}')
+    gh pr close $prid
+  done
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"

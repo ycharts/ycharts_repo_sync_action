@@ -3,7 +3,7 @@
 set -u
 
 # Keep the caller's Anthropic settings and git config (signing, hooks) out of the tests.
-unset ANTHROPIC_MODEL ANTHROPIC_API_KEY
+unset ANTHROPIC_MODEL ANTHROPIC_API_KEY DESCRIBE_PR_EXCLUDE
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
@@ -272,6 +272,150 @@ test_large_diff_is_truncated_and_flagged() {
   [ "$size" -gt 190000 ] || fail_assert "prompt too small: $size"
 }
 
+commit_files() {
+  (
+    cd "$REPO" || exit 1
+    for f in "$@"
+    do
+      mkdir -p "$(dirname "$f")"
+      printf 'content of %s UNIQUE_%s\n' "$f" "$(basename "$f" | tr -c 'A-Za-z0-9\n' '_')" > "$f"
+      git add "$f"
+    done
+    git commit -q -m "add files"
+  ) || fail_assert "could not create commit"
+}
+
+prompt_section() {
+  jq -r --arg start "$1" --arg end "$2" \
+    '.messages[0].content | split($start)[1] | split($end)[0]' "$CAPTURED_REQUEST"
+}
+
+assert_in_stat() {
+  prompt_section "<diff_stat>" "</diff_stat>" | grep -qF -- "$1" || fail_assert "'$1' missing from stat"
+}
+
+assert_in_diff() {
+  prompt_section "<diff>" "</diff>" | grep -qF -- "$1" || fail_assert "'$1' missing from diff"
+}
+
+assert_not_in_diff() {
+  if prompt_section "<diff>" "</diff>" | grep -qF -- "$1"
+  then
+    fail_assert "'$1' unexpectedly in diff"
+  fi
+}
+
+assert_prompt_contains() {
+  jq -e --arg s "$1" '.messages[0].content | contains($s)' "$CAPTURED_REQUEST" > /dev/null \
+    || fail_assert "prompt missing '$1'"
+}
+
+assert_prompt_lacks() {
+  jq -e --arg s "$1" '.messages[0].content | contains($s) | not' "$CAPTURED_REQUEST" > /dev/null \
+    || fail_assert "prompt unexpectedly contains '$1'"
+}
+
+test_root_package_lock_excluded_from_diff_but_in_stat() {
+  commit_files package-lock.json
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  assert_in_stat "package-lock.json"
+  assert_not_in_diff "UNIQUE_package_lock_json"
+  assert_not_in_diff "package-lock.json"
+}
+
+test_nested_excluded_files_absent_from_diff_but_in_stat() {
+  commit_files sub/dir/yarn.lock assets/app.min.js assets/app.js.map assets/site.min.css sub/pnpm-lock.yaml
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  for f in yarn.lock app.min.js app.js.map site.min.css pnpm-lock.yaml
+  do
+    assert_in_stat "$f"
+  done
+  for m in UNIQUE_yarn_lock UNIQUE_app_min_js UNIQUE_app_js_map UNIQUE_site_min_css UNIQUE_pnpm_lock_yaml
+  do
+    assert_not_in_diff "$m"
+  done
+}
+
+test_describe_pr_exclude_env_adds_globs() {
+  commit_files dist/out.js tests/a.snap src/keep.txt
+  write_response end_turn "$good_text"
+  DESCRIBE_PR_EXCLUDE='dist/**, *.snap' ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  assert_in_stat "dist/out.js"
+  assert_in_stat "a.snap"
+  assert_not_in_diff "UNIQUE_out_js"
+  assert_not_in_diff "UNIQUE_a_snap"
+  assert_in_diff "UNIQUE_keep_txt"
+}
+
+test_only_excluded_files_still_succeeds_and_notes_exclusion() {
+  commit_files package-lock.json yarn.lock
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  assert_eq "Add widget support" "$(sed -n 1p "$OUT")" "title line"
+  assert_file_contains "$OUT" "Adds widgets." "body content"
+  assert_prompt_contains "Files excluded from the diff below"
+  assert_prompt_contains "<excluded_files>"
+  assert_not_in_diff "UNIQUE_"
+  assert_prompt_lacks "The diff below was truncated"
+}
+
+test_no_exclusion_notice_when_nothing_excluded() {
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_prompt_lacks "<excluded_files>"
+}
+
+test_truncated_diff_appends_partial_note_as_last_line() {
+  (
+    cd "$REPO" || exit 1
+    awk 'BEGIN { for (i = 0; i < 30000; i++) print "padding line number " i " xxxxxxxxxx" }' > big.txt
+    git add big.txt
+    git commit -q -m big
+  ) || fail_assert "could not create large commit"
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  last=$(tail -n 1 "$OUT")
+  case "$last" in
+    "_Generated from a partial diff (first 200 KB of "*" KB)._") ;;
+    *) fail_assert "last line is not the partial-diff note: '$last'" ;;
+  esac
+  total=$(printf '%s' "$last" | sed 's/.* of \([0-9]*\) KB.*/\1/')
+  [ "$total" -gt 200 ] && [ "$total" -lt 2000 ] || fail_assert "implausible total KB: $total"
+  assert_file_contains "$OUT" "Adds widgets." "body preserved"
+}
+
+test_untruncated_diff_has_no_partial_note() {
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  assert_file_lacks "$OUT" "partial diff" "partial note"
+}
+
+test_large_lockfile_with_small_file_is_not_truncated() {
+  (
+    cd "$REPO" || exit 1
+    awk 'BEGIN { for (i = 0; i < 30000; i++) print "lock entry " i " xxxxxxxxxxxxxxxxxxxx" }' > package-lock.json
+    printf 'small file UNIQUE_small_marker\n' > small.txt
+    git add package-lock.json small.txt
+    git commit -q -m "lock and small"
+  ) || fail_assert "could not create commit"
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_eq 0 "$STATUS" "exit status"
+  assert_in_diff "UNIQUE_small_marker"
+  assert_not_in_diff "lock entry 0 "
+  assert_in_stat "package-lock.json"
+  assert_prompt_lacks "The diff below was truncated"
+  assert_file_lacks "$OUT" "partial diff" "partial note"
+}
+
 run_test() {
   CURRENT="$1"
   TEST_OK=1
@@ -302,7 +446,15 @@ for t in \
   test_missing_api_key_fails_without_calling_curl \
   test_empty_api_key_fails_without_calling_curl \
   test_small_diff_is_not_marked_truncated \
-  test_large_diff_is_truncated_and_flagged
+  test_large_diff_is_truncated_and_flagged \
+  test_root_package_lock_excluded_from_diff_but_in_stat \
+  test_nested_excluded_files_absent_from_diff_but_in_stat \
+  test_describe_pr_exclude_env_adds_globs \
+  test_only_excluded_files_still_succeeds_and_notes_exclusion \
+  test_no_exclusion_notice_when_nothing_excluded \
+  test_truncated_diff_appends_partial_note_as_last_line \
+  test_untruncated_diff_has_no_partial_note \
+  test_large_lockfile_with_small_file_is_not_truncated
 do
   run_test "$t"
 done

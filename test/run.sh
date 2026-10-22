@@ -707,6 +707,9 @@ test_system_prompt_context_exclusion_only_has_context_sentence() {
 }
 
 test_system_prompt_both_exclusions_have_both_sentences() {
+  # Both lock files match the default excludes.
+  # package-lock.json is synced, so it is a synced exclusion;
+  # yarn.lock is not, so it is a context exclusion.
   commit_files package-lock.json
   src_init
   src_commit "second source commit" other2.txt yarn.lock

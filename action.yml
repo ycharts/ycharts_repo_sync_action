@@ -43,6 +43,14 @@ inputs:
   source_commit:
     description: 'Commit SHA, e.g. github.sha. When set, only files the commit added or modified (compared to its first parent) are copied, still filtered by source_folder and source_files'
     required: false
+  generate_pr_description:
+    description: 'Whether to generate the pull request title and description with the Claude API. Requires the ANTHROPIC_API_KEY env var. Falls back to the default title and body on any failure'
+    required: false
+    default: false
+  anthropic_model:
+    description: 'Claude model used to generate the pull request description'
+    required: false
+    default: "claude-opus-5-5"
 runs:
   using: 'docker'
   image: 'Dockerfile'

@@ -46,6 +46,11 @@ git clone "https://$API_TOKEN_GITHUB@github.com/$INPUT_DESTINATION_REPO.git" "$C
 
 echo "Copying contents to git repo"
 mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
+SOURCE_COMMIT_MESSAGE=""
+if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+then
+  SOURCE_COMMIT_MESSAGE=$(git -C "$INPUT_SOURCE_FOLDER" log -1 --format=%B "$GITHUB_SHA" 2>/dev/null || true)
+fi
 cd $INPUT_SOURCE_FOLDER
 if [ -n "$INPUT_SOURCE_COMMIT" ]
 then
@@ -83,11 +88,39 @@ then
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"
-  gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
-               --body $INPUT_DESTINATION_HEAD_BRANCH \
-               --base $INPUT_DESTINATION_BASE_BRANCH \
-               --head $INPUT_DESTINATION_HEAD_BRANCH \
-                  $PULL_REQUEST_REVIEWERS
+  PR_GENERATED=false
+  if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+  then
+    echo "Generating pull request description"
+    set +x
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$SOURCE_COMMIT_MESSAGE")
+    then
+      PR_GENERATED=true
+    else
+      echo "Warning: could not generate the pull request description, using the default title and body"
+    fi
+    set -x
+  fi
+  if [ "$PR_GENERATED" = true ]
+  then
+    PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH: $(printf '%s\n' "$GENERATED" | head -n 1)"
+    PR_BODY_FILE="$CLONE_DIR.pr_body"
+    {
+      printf '%s\n' "$GENERATED" | tail -n +2
+      printf '\nSource commit: https://github.com/%s/commit/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+    } > "$PR_BODY_FILE"
+    gh pr create --title "$PR_TITLE" \
+                 --body-file "$PR_BODY_FILE" \
+                 --base $INPUT_DESTINATION_BASE_BRANCH \
+                 --head $INPUT_DESTINATION_HEAD_BRANCH \
+                    $PULL_REQUEST_REVIEWERS
+  else
+    gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
+                 --body $INPUT_DESTINATION_HEAD_BRANCH \
+                 --base $INPUT_DESTINATION_BASE_BRANCH \
+                 --head $INPUT_DESTINATION_HEAD_BRANCH \
+                    $PULL_REQUEST_REVIEWERS
+  fi
   # Labels are added one at a time after creation, not with `gh pr create --label`,
   # because a label missing from the destination repo would fail the whole create.
   # The `if !` guard keeps a failed label from aborting the script under `set -e`.

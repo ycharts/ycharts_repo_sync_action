@@ -4,6 +4,7 @@ set -u
 
 # Keep the caller's Anthropic settings and git config (signing, hooks) out of the tests.
 unset ANTHROPIC_MODEL ANTHROPIC_API_KEY DESCRIBE_PR_EXCLUDE
+unset GITHUB_SHA GITHUB_EVENT_PATH GITHUB_WORKSPACE GITHUB_REPOSITORY
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
@@ -420,6 +421,305 @@ test_large_lockfile_with_small_file_is_not_truncated() {
   assert_file_lacks "$OUT" "partial diff" "partial note"
 }
 
+src_init() {
+  ORIGIN="$CASE_DIR/origin"
+  SRC="$CASE_DIR/src"
+  mkdir -p "$ORIGIN"
+  (
+    cd "$ORIGIN" || exit 1
+    git init -q .
+    git config commit.gpgsign false
+    git config core.hooksPath /dev/null
+  ) || fail_assert "could not create source origin"
+  src_commit "source base" base.txt
+  SRC_C1=$(git -C "$ORIGIN" rev-parse HEAD)
+}
+
+src_commit() {
+  msg="$1"
+  shift
+  (
+    cd "$ORIGIN" || exit 1
+    for f in "$@"
+    do
+      mkdir -p "$(dirname "$f")"
+      printf 'content of %s UNIQUE_%s\n' "$f" "$(basename "$f" | tr -c 'A-Za-z0-9\n' '_')" > "$f"
+      git add -- "$f"
+    done
+    git commit -q -m "$msg"
+  ) || fail_assert "could not create source commit"
+}
+
+src_clone() {
+  SRC_HEAD=$(git -C "$ORIGIN" rev-parse HEAD)
+  git clone -q --depth 1 "file://$ORIGIN" "$SRC" 2>/dev/null || fail_assert "could not clone source origin"
+}
+
+write_event() {
+  EVENT="$CASE_DIR/event.json"
+  jq -n --arg before "$1" '{before: $before}' > "$EVENT"
+}
+
+write_synced_list() {
+  SYNCED_LIST="$CASE_DIR/synced_files"
+  : > "$SYNCED_LIST"
+  for f in "$@"
+  do
+    printf '%s\n' "$f" >> "$SYNCED_LIST"
+  done
+}
+
+run_with_source() {
+  (
+    cd "$REPO" || exit 1
+    PATH="$BIN:$PATH" sh "$SCRIPT" "org/source" "$SRC_HEAD" "$SRC" "${EVENT:-}" "${SYNCED_LIST:-}" > "$OUT" 2> "$ERR"
+  )
+  STATUS=$?
+}
+
+assert_in_context() {
+  prompt_section "<context_diff>" "</context_diff>" | grep -qF -- "$1" || fail_assert "'$1' missing from context diff"
+}
+
+assert_not_in_context() {
+  if prompt_section "<context_diff>" "</context_diff>" | grep -qF -- "$1"
+  then
+    fail_assert "'$1' unexpectedly in context diff"
+  fi
+}
+
+assert_system_contains() {
+  jq -e --arg s "$1" '.system | contains($s)' "$CAPTURED_REQUEST" > /dev/null \
+    || fail_assert "system prompt missing '$1'"
+}
+
+assert_system_lacks() {
+  jq -e --arg s "$1" '.system | contains($s) | not' "$CAPTURED_REQUEST" > /dev/null \
+    || fail_assert "system prompt unexpectedly contains '$1'"
+}
+
+assert_success_with_title() {
+  assert_eq 0 "$STATUS" "exit status"
+  assert_eq "Add widget support" "$(sed -n 1p "$OUT")" "title line"
+  assert_file_contains "$OUT" "Adds widgets." "body content"
+}
+
+test_synced_files_are_in_synced_section_and_not_in_context_diff() {
+  commit_files synced.txt
+  src_init
+  src_commit "sync and tweak" synced.txt unsynced.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list synced.txt
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_in_diff "UNIQUE_synced_txt"
+  assert_not_in_context "UNIQUE_synced_txt"
+  assert_not_in_context "synced.txt b/synced.txt"
+  assert_in_context "UNIQUE_unsynced_txt"
+  assert_not_in_diff "UNIQUE_unsynced_txt"
+}
+
+test_multi_commit_push_includes_all_messages_and_changes() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "second source commit"
+  assert_prompt_contains "third source commit"
+  assert_prompt_lacks "source base"
+  assert_in_context "UNIQUE_other2_txt"
+  assert_in_context "UNIQUE_other3_txt"
+}
+
+test_before_all_zeros_falls_back_to_previous_commit() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  write_event 0000000000000000000000000000000000000000
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "third source commit"
+  assert_prompt_lacks "second source commit"
+  assert_in_context "UNIQUE_other3_txt"
+  assert_not_in_context "UNIQUE_other2_txt"
+}
+
+test_missing_event_path_falls_back_to_previous_commit() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  EVENT=""
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "third source commit"
+  assert_prompt_lacks "second source commit"
+  assert_in_context "UNIQUE_other3_txt"
+  assert_not_in_context "UNIQUE_other2_txt"
+}
+
+test_event_before_not_in_source_falls_back_to_previous_commit() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  write_event 1234567890123456789012345678901234567890
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "third source commit"
+  assert_prompt_lacks "second source commit"
+  assert_in_context "UNIQUE_other3_txt"
+}
+
+test_shallow_source_checkout_is_deepened_for_context() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  assert_eq true "$(git -C "$SRC" rev-parse --is-shallow-repository)" "clone is shallow"
+  write_event "$SRC_C1"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "<context_diff>"
+  assert_prompt_contains "second source commit"
+  assert_in_context "UNIQUE_other2_txt"
+}
+
+test_failed_deepen_skips_context_with_warning() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  git -C "$SRC" remote set-url origin "$CASE_DIR/does-not-exist"
+  write_event "$SRC_C1"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_file_contains "$ERR" "warning" "warning on stderr"
+  assert_prompt_lacks "<context_diff>"
+  assert_prompt_lacks "<source_diff_stat>"
+  assert_prompt_lacks "UNIQUE_other2_txt"
+  assert_in_diff "changed content marker"
+}
+
+test_no_source_info_describes_synced_diff_only() {
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_success_with_title
+  assert_prompt_lacks "<context_diff>"
+  assert_prompt_lacks "<source_diff_stat>"
+  assert_prompt_lacks "<commit_messages>"
+  assert_in_diff "changed content marker"
+  assert_eq "" "$(cat "$ERR")" "stderr empty"
+}
+
+test_large_context_diff_is_truncated_without_affecting_synced_diff() {
+  commit_files synced.txt
+  src_init
+  src_commit "sync and add big file" synced.txt
+  (
+    cd "$ORIGIN" || exit 1
+    awk 'BEGIN { for (i = 0; i < 30000; i++) print "context padding " i " xxxxxxxxxx" }' > big.txt
+    git add big.txt
+    git commit -q -m "add big unsynced file"
+  ) || fail_assert "could not create large source commit"
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list synced.txt
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "The context diff below was truncated and is incomplete."
+  assert_prompt_lacks "The diff below was truncated"
+  assert_in_context "context padding 0 "
+  assert_not_in_context "context padding 29999 "
+  assert_in_diff "UNIQUE_synced_txt"
+  assert_file_lacks "$OUT" "partial diff" "partial note"
+  size=$(prompt_section "<context_diff>" "</context_diff>" | wc -c | tr -d ' ')
+  [ "$size" -lt 105000 ] || fail_assert "context diff too large: $size"
+  [ "$size" -gt 95000 ] || fail_assert "context diff too small: $size"
+}
+
+test_small_context_diff_is_not_marked_truncated() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_prompt_contains "<context_diff>"
+  assert_prompt_lacks "The context diff below was truncated"
+}
+
+test_system_prompt_omits_excluded_sentence_when_nothing_excluded() {
+  commit_files synced.txt
+  src_init
+  src_commit "sync and tweak" synced.txt unsynced.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list synced.txt
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_system_lacks "excluded from the diffs"
+}
+
+test_system_prompt_includes_excluded_sentence_for_excluded_destination_file() {
+  commit_files package-lock.json
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_script
+  assert_system_contains "excluded from the diffs"
+}
+
+test_system_prompt_includes_excluded_sentence_for_excluded_source_file() {
+  src_init
+  src_commit "second source commit" other2.txt package-lock.json
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_system_contains "excluded from the diffs"
+  assert_prompt_contains "<excluded_context_files>"
+  assert_not_in_context "UNIQUE_package_lock_json"
+}
+
+test_synced_names_with_glob_characters_and_spaces_are_excluded_literally() {
+  src_init
+  src_commit "glob names" 'star*.txt' starX.txt '[ab].txt' a.txt 'sp ace.txt' 'sp ace2.txt'
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list 'star*.txt' '[ab].txt' 'sp ace.txt'
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_not_in_context "UNIQUE_star_txt"
+  assert_not_in_context "UNIQUE__ab__txt"
+  assert_not_in_context "UNIQUE_sp_ace_txt"
+  assert_in_context "UNIQUE_starX_txt"
+  assert_in_context "UNIQUE_a_txt"
+  assert_in_context "UNIQUE_sp_ace2_txt"
+}
+
 run_test() {
   CURRENT="$1"
   TEST_OK=1
@@ -458,7 +758,21 @@ for t in \
   test_no_exclusion_notice_when_nothing_excluded \
   test_truncated_diff_appends_partial_note_as_last_line \
   test_untruncated_diff_has_no_partial_note \
-  test_large_lockfile_with_small_file_is_not_truncated
+  test_large_lockfile_with_small_file_is_not_truncated \
+  test_synced_files_are_in_synced_section_and_not_in_context_diff \
+  test_multi_commit_push_includes_all_messages_and_changes \
+  test_before_all_zeros_falls_back_to_previous_commit \
+  test_missing_event_path_falls_back_to_previous_commit \
+  test_event_before_not_in_source_falls_back_to_previous_commit \
+  test_shallow_source_checkout_is_deepened_for_context \
+  test_failed_deepen_skips_context_with_warning \
+  test_no_source_info_describes_synced_diff_only \
+  test_large_context_diff_is_truncated_without_affecting_synced_diff \
+  test_small_context_diff_is_not_marked_truncated \
+  test_system_prompt_omits_excluded_sentence_when_nothing_excluded \
+  test_system_prompt_includes_excluded_sentence_for_excluded_destination_file \
+  test_system_prompt_includes_excluded_sentence_for_excluded_source_file \
+  test_synced_names_with_glob_characters_and_spaces_are_excluded_literally
 do
   run_test "$t"
 done

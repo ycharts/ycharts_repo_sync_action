@@ -45,10 +45,6 @@ then
     then
       continue
     fi
-    case "$PATTERN" in
-      */*) ;;
-      *) PATTERN="**/$PATTERN" ;;
-    esac
     set -- "$@" ":(exclude,glob)$PATTERN"
   done < "$WORK_DIR/user_excludes.txt"
 fi

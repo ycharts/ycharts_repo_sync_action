@@ -341,7 +341,7 @@ test_nested_excluded_files_absent_from_diff_but_in_stat() {
 }
 
 test_describe_pr_exclude_env_adds_globs() {
-  commit_files dist/out.js tests/a.snap src/keep.txt
+  commit_files dist/out.js a.snap tests/b.snap src/keep.txt
   write_response end_turn "$good_text"
   DESCRIBE_PR_EXCLUDE='dist/**, *.snap' ANTHROPIC_API_KEY="$FAKE_KEY" run_script
   assert_eq 0 "$STATUS" "exit status"
@@ -349,6 +349,7 @@ test_describe_pr_exclude_env_adds_globs() {
   assert_in_stat "a.snap"
   assert_not_in_diff "UNIQUE_out_js"
   assert_not_in_diff "UNIQUE_a_snap"
+  assert_in_diff "UNIQUE_b_snap"
   assert_in_diff "UNIQUE_keep_txt"
 }
 

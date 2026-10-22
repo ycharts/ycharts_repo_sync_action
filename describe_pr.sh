@@ -4,7 +4,8 @@ set +x
 set -u
 
 # Usage: describe_pr.sh SOURCE_REPO SOURCE_SHA SOURCE_COMMIT_MESSAGE
-# Env: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (default claude-opus-5-5)
+# Env: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (default claude-opus-5-5),
+#   DESCRIBE_PR_EXCLUDE (optional, comma-separated globs left out of the diff)
 # Run inside the destination clone after the commit.
 # Prints the title on line 1 and the body on the following lines.
 
@@ -30,6 +31,9 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 git diff --stat HEAD~1 > "$WORK_DIR/stat.txt" || fail "git diff --stat failed"
 
+# Exclude pathspecs collect in "$@" so globs with spaces or wildcards reach git intact.
+# Built-ins get a `**/` prefix to match at any depth, including the root.
+# User globs are matched from the repo root as written, so `*.snap` is root-only.
 set --
 for PATTERN in package-lock.json yarn.lock pnpm-lock.yaml '*.min.js' '*.min.css' '*.map'
 do

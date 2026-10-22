@@ -680,17 +680,18 @@ test_system_prompt_omits_excluded_sentence_when_nothing_excluded() {
   write_response end_turn "$good_text"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
-  assert_system_lacks "excluded from the diffs"
+  assert_system_lacks "generated or noisy"
 }
 
-test_system_prompt_includes_excluded_sentence_for_excluded_destination_file() {
+test_system_prompt_synced_exclusion_only_has_may_mention_sentence() {
   commit_files package-lock.json
   write_response end_turn "$good_text"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_script
-  assert_system_contains "excluded from the diffs"
+  assert_system_contains "You may mention them in at most one brief line"
+  assert_system_lacks "do not describe them or mention them in the body"
 }
 
-test_system_prompt_includes_excluded_sentence_for_excluded_source_file() {
+test_system_prompt_context_exclusion_only_has_context_sentence() {
   src_init
   src_commit "second source commit" other2.txt package-lock.json
   src_clone
@@ -699,9 +700,24 @@ test_system_prompt_includes_excluded_sentence_for_excluded_source_file() {
   write_response end_turn "$good_text"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
-  assert_system_contains "excluded from the diffs"
+  assert_system_contains "do not describe them or mention them in the body"
+  assert_system_lacks "You may mention them in at most one brief line"
   assert_prompt_contains "<excluded_context_files>"
   assert_not_in_context "UNIQUE_package_lock_json"
+}
+
+test_system_prompt_both_exclusions_have_both_sentences() {
+  commit_files package-lock.json
+  src_init
+  src_commit "second source commit" other2.txt yarn.lock
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list package-lock.json
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_system_contains "You may mention them in at most one brief line"
+  assert_system_contains "do not describe them or mention them in the body"
 }
 
 test_synced_names_with_glob_characters_and_spaces_are_excluded_literally() {
@@ -774,8 +790,9 @@ for t in \
   test_large_context_diff_is_truncated_without_affecting_synced_diff \
   test_small_context_diff_is_not_marked_truncated \
   test_system_prompt_omits_excluded_sentence_when_nothing_excluded \
-  test_system_prompt_includes_excluded_sentence_for_excluded_destination_file \
-  test_system_prompt_includes_excluded_sentence_for_excluded_source_file \
+  test_system_prompt_synced_exclusion_only_has_may_mention_sentence \
+  test_system_prompt_context_exclusion_only_has_context_sentence \
+  test_system_prompt_both_exclusions_have_both_sentences \
   test_synced_names_with_glob_characters_and_spaces_are_excluded_literally
 do
   run_test "$t"

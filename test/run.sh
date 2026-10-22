@@ -450,6 +450,7 @@ src_commit() {
   ) || fail_assert "could not create source commit"
 }
 
+# A shallow file:// clone makes describe_pr.sh run its real `git fetch --deepen`.
 src_clone() {
   SRC_HEAD=$(git -C "$ORIGIN" rev-parse HEAD)
   git clone -q --depth 1 "file://$ORIGIN" "$SRC" 2>/dev/null || fail_assert "could not clone source origin"
@@ -705,6 +706,9 @@ test_system_prompt_includes_excluded_sentence_for_excluded_source_file() {
 
 test_synced_names_with_glob_characters_and_spaces_are_excluded_literally() {
   src_init
+  # Each glob-like synced name has a sibling it would match if treated as a glob,
+  # and the sibling must stay in the context diff.
+  # src_commit turns each non-alphanumeric character into `_`, so `star*.txt` is UNIQUE_star__txt.
   src_commit "glob names" 'star*.txt' starX.txt '[ab].txt' a.txt 'sp ace.txt' 'sp ace2.txt'
   src_clone
   write_event "$SRC_C1"

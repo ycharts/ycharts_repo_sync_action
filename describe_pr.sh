@@ -10,7 +10,7 @@ set -u
 # Env: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (default claude-opus-5-5),
 #   DESCRIBE_PR_EXCLUDE (optional, comma-separated globs left out of the diffs)
 # Run inside the destination clone after the commit.
-# Without SOURCE_DIR and SOURCE_SHA, only the destination diff is described.
+# Without SOURCE_DIR or SOURCE_SHA, only the destination diff is described.
 # Prints the title on line 1 and the body on the following lines.
 
 MAX_DIFF_BYTES=200000
@@ -78,10 +78,15 @@ then
   TRUNCATED=true
 fi
 
+# The container runs as root but the workspace is owned by another user,
+# so git refuses it as "dubious ownership" without safe.directory.
+# core.quotepath=off keeps non-ASCII names unquoted so they match the synced list.
 git_src() {
   git -c safe.directory='*' -c core.quotepath=off -C "$SOURCE_DIR" "$@"
 }
 
+# Sets BASE to BEFORE when it is an ancestor of SOURCE_SHA,
+# or to the parent of SOURCE_SHA when BEFORE is empty.
 base_is_usable() {
   if [ -n "$BEFORE" ]
   then
@@ -103,6 +108,7 @@ resolve_base() {
   then
     BEFORE=$(jq -r '.before // empty' "$EVENT_PATH" 2>/dev/null) || BEFORE=""
   fi
+  # GitHub sends all zeros as `before` when a push creates the branch.
   case "$BEFORE" in
     *[!0-9a-fA-F]*) BEFORE="" ;;
     *[!0]*) ;;
@@ -118,6 +124,8 @@ resolve_base() {
       break
     fi
     ATTEMPT=$((ATTEMPT + 1))
+    # Fetching SOURCE_SHA by name deepens only its history;
+    # a bare `fetch origin` would deepen every branch in the default refspec.
     GIT_TERMINAL_PROMPT=0 git_src fetch --no-tags --quiet --deepen="$DEEPEN_STEP" origin "$SOURCE_SHA" >/dev/null 2>&1 || break
   done
   if [ -z "$BASE" ] && [ -n "$BEFORE" ]
@@ -150,6 +158,8 @@ then
     else
       : > "$WORK_DIR/synced_sorted.txt"
     fi
+    # git diff has no --pathspec-from-file, so synced files join the excludes as arguments.
+    # A very long synced list could approach the ARG_MAX limit.
     while IFS= read -r FILE || [ -n "$FILE" ]
     do
       if [ -n "$FILE" ]
@@ -161,6 +171,7 @@ then
       && git_src diff --name-only "$BASE" "$SOURCE_SHA" 2>/dev/null | sort > "$WORK_DIR/src_all.txt" \
       && git_src diff --name-only "$BASE" "$SOURCE_SHA" -- . "$@" 2>/dev/null | sort > "$WORK_DIR/src_kept.txt"
     then
+      # Synced files are left out of the context diff but are not exclusions.
       comm -23 "$WORK_DIR/src_all.txt" "$WORK_DIR/src_kept.txt" | comm -23 - "$WORK_DIR/synced_sorted.txt" > "$WORK_DIR/context_excluded.txt"
       CONTEXT_SIZE=$(wc -c < "$WORK_DIR/context_full.diff" | tr -d ' ')
       head -c "$CONTEXT_MAX_DIFF_BYTES" "$WORK_DIR/context_full.diff" > "$WORK_DIR/context.diff"

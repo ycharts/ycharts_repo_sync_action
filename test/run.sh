@@ -114,7 +114,7 @@ good_text='{"title":"Add widget support","body":"## Summary\n\nAdds widgets."}'
 run_script() {
   (
     cd "$REPO" || exit 1
-    PATH="$BIN:$PATH" sh "$SCRIPT" "org/source" "abc123" "source message" > "$OUT" 2> "$ERR"
+    PATH="$BIN:$PATH" sh "$SCRIPT" "org/source" "abc123" > "$OUT" 2> "$ERR"
   )
   STATUS=$?
 }
@@ -150,7 +150,7 @@ test_request_defaults_model_and_includes_diff() {
   assert_eq json_schema "$(jq -r .output_config.format.type "$CAPTURED_REQUEST")" "format type"
   jq -e '.messages[0].content | contains("changed content marker")' "$CAPTURED_REQUEST" > /dev/null \
     || fail_assert "diff content missing from prompt"
-  jq -e '.messages[0].content | contains("org/source") and contains("abc123") and contains("source message")' \
+  jq -e '.messages[0].content | contains("org/source") and contains("abc123")' \
     "$CAPTURED_REQUEST" > /dev/null || fail_assert "source context missing from prompt"
   assert_key_not_leaked
 }

@@ -51,7 +51,11 @@ if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
 then
   # Optional context; git can refuse the folder (for example, safe.directory),
   # so fall back to an empty message instead of failing under `set -e`.
-  SOURCE_COMMIT_MESSAGE=$(git -C "$INPUT_SOURCE_FOLDER" log -1 --format=%B "$GITHUB_SHA" 2>/dev/null || true)
+  SOURCE_COMMIT_MESSAGE=$(git -c safe.directory='*' -C "$INPUT_SOURCE_FOLDER" log -1 --format=%B "$GITHUB_SHA" 2>/dev/null || true)
+  if [ -z "$SOURCE_COMMIT_MESSAGE" ]
+  then
+    echo "Warning: could not read source commit message; describing from the diff only"
+  fi
 fi
 cd $INPUT_SOURCE_FOLDER
 if [ -n "$INPUT_SOURCE_COMMIT" ]

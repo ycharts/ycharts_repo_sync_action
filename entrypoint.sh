@@ -67,11 +67,14 @@ SYNCED_FILES_LIST=""
 if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
 then
   SYNCED_FILES_LIST="$CLONE_DIR.synced_files"
+  # describe_pr.sh needs paths relative to the source repo root, not INPUT_SOURCE_FOLDER.
   SOURCE_PREFIX=$(printf '%s\n' "$INPUT_SOURCE_FOLDER" | sed "s#^${GITHUB_WORKSPACE:-/nonexistent}/##; s#//*#/#g; s#^\./##; s#/\$##")
   case "$SOURCE_PREFIX" in
     "" | ".") SOURCE_PREFIX="" ;;
     *) SOURCE_PREFIX="$SOURCE_PREFIX/" ;;
   esac
+  # Left unquoted so find sees the same word-splitting and globbing as the cp above.
+  # Filenames containing newlines are not handled.
   { find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true; } \
     | sed "s#^\./##; s#^#$SOURCE_PREFIX#; s#//*#/#g" > "$SYNCED_FILES_LIST" || true
 fi

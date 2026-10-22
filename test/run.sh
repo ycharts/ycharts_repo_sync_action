@@ -272,6 +272,8 @@ test_large_diff_is_truncated_and_flagged() {
   [ "$size" -gt 190000 ] || fail_assert "prompt too small: $size"
 }
 
+# Each file gets a UNIQUE_<name> marker so tests can check the diff body
+# apart from the filename, which also appears in diff headers and the stat.
 commit_files() {
   (
     cd "$REPO" || exit 1
@@ -349,6 +351,7 @@ test_describe_pr_exclude_env_adds_globs() {
   assert_in_stat "a.snap"
   assert_not_in_diff "UNIQUE_out_js"
   assert_not_in_diff "UNIQUE_a_snap"
+  # A slashless glob matches only at the root; `**/*.snap` is needed for any depth.
   assert_in_diff "UNIQUE_b_snap"
   assert_in_diff "UNIQUE_keep_txt"
 }

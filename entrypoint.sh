@@ -46,19 +46,6 @@ git clone "https://$API_TOKEN_GITHUB@github.com/$INPUT_DESTINATION_REPO.git" "$C
 
 echo "Copying contents to git repo"
 mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
-SOURCE_COMMIT_MESSAGE=""
-if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
-then
-  # The container runs as root but the workspace is owned by another user,
-  # so git refuses the folder as "dubious ownership" without safe.directory.
-  # The commit message is optional context; fall back to an empty message
-  # instead of failing under `set -e`.
-  SOURCE_COMMIT_MESSAGE=$(git -c safe.directory='*' -C "$INPUT_SOURCE_FOLDER" log -1 --format=%B "$GITHUB_SHA" 2>/dev/null || true)
-  if [ -z "$SOURCE_COMMIT_MESSAGE" ]
-  then
-    echo "Warning: could not read source commit message; describing from the diff only"
-  fi
-fi
 cd $INPUT_SOURCE_FOLDER
 if [ -n "$INPUT_SOURCE_COMMIT" ]
 then
@@ -75,6 +62,18 @@ then
   done < "$SELECTED_FILES"
 else
   cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+fi
+SYNCED_FILES_LIST=""
+if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+then
+  SYNCED_FILES_LIST="$CLONE_DIR.synced_files"
+  SOURCE_PREFIX=$(printf '%s\n' "$INPUT_SOURCE_FOLDER" | sed "s#^${GITHUB_WORKSPACE:-/nonexistent}/##; s#//*#/#g; s#^\./##; s#/\$##")
+  case "$SOURCE_PREFIX" in
+    "" | ".") SOURCE_PREFIX="" ;;
+    *) SOURCE_PREFIX="$SOURCE_PREFIX/" ;;
+  esac
+  { find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true; } \
+    | sed "s#^\./##; s#^#$SOURCE_PREFIX#; s#//*#/#g" > "$SYNCED_FILES_LIST" || true
 fi
 cd -
 cd "$CLONE_DIR"
@@ -101,7 +100,7 @@ then
   then
     echo "Generating pull request description"
     set +x
-    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$SOURCE_COMMIT_MESSAGE")
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_WORKSPACE" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST")
     then
       PR_GENERATED=true
     else

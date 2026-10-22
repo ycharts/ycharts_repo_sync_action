@@ -2,6 +2,12 @@
 
 set -u
 
+unset ANTHROPIC_MODEL ANTHROPIC_API_KEY
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
+export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPT="$ROOT/describe_pr.sh"
 SANDBOX=$(mktemp -d)
@@ -86,6 +92,8 @@ STUB
     git init -q .
     git config user.email test@example.com
     git config user.name Test
+    git config commit.gpgsign false
+    git config core.hooksPath /dev/null
     printf 'line one\n' > file.txt
     git add file.txt
     git commit -q -m first
@@ -220,7 +228,7 @@ test_missing_api_key_fails_without_calling_curl() {
   write_response end_turn "$good_text"
   (
     cd "$REPO" || exit 1
-    env -u ANTHROPIC_API_KEY PATH="$BIN:$PATH" sh "$SCRIPT" a b c > "$OUT" 2> "$ERR"
+    PATH="$BIN:$PATH" sh "$SCRIPT" a b c > "$OUT" 2> "$ERR"
   )
   STATUS=$?
   assert_nonzero "$STATUS" "missing key"
@@ -256,8 +264,11 @@ test_large_diff_is_truncated_and_flagged() {
     "$CAPTURED_REQUEST" > /dev/null || fail_assert "truncation notice missing"
   jq -e '.messages[0].content | contains("padding line number 29999") | not' \
     "$CAPTURED_REQUEST" > /dev/null || fail_assert "diff tail was not cut"
+  jq -e '.messages[0].content | contains("padding line number 0 ") and contains("padding line number 4000 ")' \
+    "$CAPTURED_REQUEST" > /dev/null || fail_assert "early diff content missing"
   size=$(jq -r '.messages[0].content | length' "$CAPTURED_REQUEST")
   [ "$size" -lt 210000 ] || fail_assert "prompt too large: $size"
+  [ "$size" -gt 190000 ] || fail_assert "prompt too small: $size"
 }
 
 run_test() {

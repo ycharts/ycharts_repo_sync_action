@@ -712,7 +712,7 @@ test_synced_names_with_glob_characters_and_spaces_are_excluded_literally() {
   write_response end_turn "$good_text"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
-  assert_not_in_context "UNIQUE_star_txt"
+  assert_not_in_context "UNIQUE_star__txt"
   assert_not_in_context "UNIQUE__ab__txt"
   assert_not_in_context "UNIQUE_sp_ace_txt"
   assert_in_context "UNIQUE_starX_txt"

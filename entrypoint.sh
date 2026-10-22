@@ -57,11 +57,14 @@ git add .
 if git status | grep -q "Changes to be committed"
 then
   git commit --message "Update from https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
-  echo "Closing existing PRs"
-  gh pr list --search "is:pr is:open $INPUT_DESTINATION_HEAD_BRANCH_PREFIX in:title"| while IFS= read -r line; do
-    prid=$(echo $line | awk '{print $1;}')
-    gh pr close $prid
-  done
+  if [ "${INPUT_CLOSE_EXISTING_PULL_REQUESTS:-true}" = true ]
+  then
+    echo "Closing existing PRs"
+    gh pr list --search "is:pr is:open $INPUT_DESTINATION_HEAD_BRANCH_PREFIX in:title"| while IFS= read -r line; do
+      prid=$(echo $line | awk '{print $1;}')
+      gh pr close $prid
+    done
+  fi
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"

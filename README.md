@@ -51,19 +51,6 @@ This GitHub Action copies a folder from the current repository to a location in 
 * anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
 * pr_description_exclude: [optional] Comma-separated globs of files to leave out of the diff sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat.
 
-### Pull request description details
-* The diff sent to Claude leaves out these files at any directory depth: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css` and `*.map`. The diff stat stays complete, and Claude is told which files were excluded so it can mention them in at most one line.
-* The diff is capped at 200 KB. When the filtered diff is larger, the description ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`. No note is added when the diff fits.
-
-### Source context
-Only the files this action syncs are part of the pull request, so the body describes just those changes. The model also sees the rest of the source change as context, and uses it for the title and to explain why the synced files changed.
-
-* The prompt has the source commit messages (oldest first, up to 50 commits and 20 KB), a stat of the whole source change, a context diff, and the synced diff. The context diff holds the source changes outside the synced files and is marked as not part of the pull request.
-* The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing or unreadable event payload, or a force push where `before` is not an ancestor, the range is the pushed commit alone.
-* The context diff uses the same built-in and `pr_description_exclude` exclusions as the synced diff and is capped at 100 KB. Truncation is flagged to the model only; the description gets no note for it.
-* `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits, non-interactive) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`.
-* If the base commit can't be reached, the context diff is skipped with a warning in the log, only the pushed commit's message is sent, and the description is built from the synced diff. A failure to build the context never fails the description.
-
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:
 - [Personal access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
@@ -75,6 +62,25 @@ Only the files this action syncs are part of the pull request, so the body descr
 
 ## Behavior Notes
 The action will create any destination paths if they don't exist. It will also overwrite existing files if they already exist in the locations being copied to. It will not delete the entire destination repository.
+
+### Pull request description details
+* The diff sent to the LLM excludes these files at any directory depth. These paths are still sent in the prompt for additional context.
+  * `package-lock.json`
+  * `yarn.lock`
+  * `pnpm-lock.yaml`
+  * `*.min.js`
+  * `*.min.css` 
+  * `*.map`.
+* The diff is capped at 200 KB. When the filtered diff is larger, the description ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
+
+### Source context
+Only the files this action syncs are part of the pull request, so the body describes just those changes. The model also sees the rest of the source change as context, and uses it for the title and to explain why the synced files changed.
+
+* The prompt includes the source commit messages (oldest first, up to 50 commits and 20 KB), a stat of the whole source change, a context diff, and the synced diff. The context diff holds the source changes outside the synced files and is marked as not part of the pull request.
+* The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing or unreadable event payload, or a force push where `before` is not an ancestor, the range is the pushed commit alone.
+* The context diff uses the same built-in and `pr_description_exclude` exclusions as the synced diff and is capped at 100 KB.
+* `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits, non-interactive) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`.
+* If the base commit can't be reached, the context diff is skipped with a warning in the log, only the pushed commit's message is sent, and the description is built from the synced diff.
 
 ## Tests
 

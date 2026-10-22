@@ -49,6 +49,8 @@ mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
 SOURCE_COMMIT_MESSAGE=""
 if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
 then
+  # Optional context; git can refuse the folder (for example, safe.directory),
+  # so fall back to an empty message instead of failing under `set -e`.
   SOURCE_COMMIT_MESSAGE=$(git -C "$INPUT_SOURCE_FOLDER" log -1 --format=%B "$GITHUB_SHA" 2>/dev/null || true)
 fi
 cd $INPUT_SOURCE_FOLDER

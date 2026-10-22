@@ -51,6 +51,9 @@ inputs:
     description: 'Claude model used to generate the pull request description'
     required: false
     default: "claude-opus-5-5"
+  pr_description_exclude:
+    description: 'Comma-separated globs of files to leave out of the diff sent to Claude, added to the built-in exclusions. Excluded files still appear in the diff stat'
+    required: false
 runs:
   using: 'docker'
   image: 'Dockerfile'

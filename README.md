@@ -32,6 +32,7 @@ This GitHub Action copies a folder from the current repository to a location in 
             close_existing_pull_requests: false
             source_commit: ${{ github.sha }}
             generate_pr_description: true
+            pr_description_exclude: 'dist/**,**/*.snap'
 
 ## Variables
 * source_folder: The folder to be moved. Uses the same syntax as the `cp` command. Incude the path for any files not in the repositories root directory.
@@ -48,6 +49,11 @@ This GitHub Action copies a folder from the current repository to a location in 
 * source_commit: [optional] A commit hash, usually `${{ github.sha }}`. When set, only the files the commit added or modified, compared with its first parent, are copied, filtered by `source_folder` and `source_files`. Deleted files are not removed from the destination. Default is empty, which copies every file matching `source_files`.
 * generate_pr_description: [optional] Set to `true` to generate the pull request title and description with the Claude API. The title is `<destination_head_branch>: <generated title>`. If generation fails for any reason, the default title and body are used. The diff of the commit and the source commit message are sent to Anthropic. Default is `false`.
 * anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
+* pr_description_exclude: [optional] Comma-separated globs of files to leave out of the diff sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat.
+
+### Pull request description details
+* The diff sent to Claude leaves out these files at any directory depth: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css` and `*.map`. The diff stat stays complete, and Claude is told which files were excluded so it can mention them in at most one line.
+* The diff is capped at 200 KB. When the filtered diff is larger, the description ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`. No note is added when the diff fits.
 
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:

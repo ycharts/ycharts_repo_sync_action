@@ -54,6 +54,8 @@ setup() {
   echo 200 > "$HTTP_STATUS_FILE"
   echo 0 > "$CURL_EXIT_FILE"
 
+  # The curl stub saves its args and stdin (where describe_pr.sh sends the key header),
+  # copies the --data-binary file for jq checks, and prints the status as -w would.
   cat > "$BIN/curl" <<STUB
 #!/bin/sh
 echo called >> "$CURL_CALLS"
@@ -242,6 +244,7 @@ test_small_diff_is_not_marked_truncated() {
 test_large_diff_is_truncated_and_flagged() {
   (
     cd "$REPO" || exit 1
+    # About 1 MB, well past the 200000-byte diff cap in describe_pr.sh.
     awk 'BEGIN { for (i = 0; i < 30000; i++) print "padding line number " i " xxxxxxxxxx" }' > big.txt
     git add big.txt
     git commit -q -m big

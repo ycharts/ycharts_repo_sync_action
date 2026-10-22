@@ -80,6 +80,7 @@ jq -n \
     }]
   }' > "$WORK_DIR/request.json" || fail "could not build request JSON"
 
+# The key header is read from stdin (`-H @-`) so it never shows up in process args.
 HTTP_CODE=$(printf 'x-api-key: %s\n' "$ANTHROPIC_API_KEY" | curl -sS \
   --max-time 120 \
   -o "$WORK_DIR/response.json" \

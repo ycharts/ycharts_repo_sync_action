@@ -2,6 +2,7 @@
 
 set -u
 
+# Keep the caller's Anthropic settings and git config (signing, hooks) out of the tests.
 unset ANTHROPIC_MODEL ANTHROPIC_API_KEY
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1

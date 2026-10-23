@@ -49,10 +49,14 @@ mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
 cd $INPUT_SOURCE_FOLDER
 if [ -n "$INPUT_SOURCE_COMMIT" ]
 then
+  # set -f leaves globs in source_files for commit_files.sh to expand in the folder it is given.
+  # Output goes to a file, not a pipe, so set -e stops on a commit_files.sh failure.
   SELECTED_FILES=$(mktemp)
   set -f
   /commit_files.sh . "$INPUT_SOURCE_COMMIT" $INPUT_SOURCE_FILES > "$SELECTED_FILES"
   set +f
+  # -P copies symlinks as links. Following them fails on directory
+  # and dangling symlinks, which commit_files.sh can list.
   while IFS= read -r f; do
     cp -P --parents "$f" "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
   done < "$SELECTED_FILES"

@@ -57,6 +57,8 @@ else
   }
 fi
 
+[ -s "$TMP_DIR/diff" ] || exit 0
+
 find $* \( -type f -o -type l \) 2>/dev/null | sed 's|^\./||' > "$TMP_DIR/found"
 
 grep -Fx -f "$TMP_DIR/diff" "$TMP_DIR/found" || true

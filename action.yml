@@ -36,17 +36,6 @@ inputs:
 runs:
   using: 'docker'
   image: 'Dockerfile'
-  args:
-    - ${{ inputs.source-folder }}
-    - ${{ inputs.source-files }}
-    - ${{ inputs.destination-repo }}
-    - ${{ inputs.destination-folder }}
-    - ${{ inputs.user-email }}
-    - ${{ inputs.user-name }}
-    - ${{ inputs.destination-head-branch }}
-    - ${{ inputs.timestamp-head-branch }}
-    - ${{ inputs.destination-base-branch }}
-    - ${{ inputs.pull-request-reviewers }}
 branding:
   icon: 'git-commit'
   color: 'green'

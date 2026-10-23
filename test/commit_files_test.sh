@@ -129,6 +129,15 @@ test_no_match() {
   check "no match exit 0" "0" "$?"
 }
 
+test_outside_folder_only() {
+  new_repo
+  write src/a; write src/b; write out; commit_all one
+  write out changed; commit_all two
+  out=$("$COMMIT_FILES" src "$(git rev-parse HEAD)" '*' 2>/dev/null)
+  check "only outside source folder output empty" "" "$out"
+  check "only outside source folder exit 0" "0" "$?"
+}
+
 test_invalid_sha() {
   new_repo
   write a.txt; commit_all one
@@ -169,6 +178,7 @@ test_globs_and_dirs
 test_delete_and_rename
 test_spaces
 test_no_match
+test_outside_folder_only
 test_invalid_sha
 test_shallow_fetch
 test_shallow_unfetchable

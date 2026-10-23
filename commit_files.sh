@@ -1,4 +1,8 @@
 #!/bin/sh
+#
+# Prints the files under <source_folder> that <source_commit> added or modified,
+# compared with its first parent, and that match <source_files>.
+# Paths are relative to <source_folder>.
 
 if [ "$#" -lt 3 ]
 then
@@ -34,6 +38,9 @@ then
   exit 1
 fi
 
+# In a shallow clone the boundary commit has no parent and looks like a root commit.
+# Fetch the parent, and fail below if it is still missing
+# rather than treat the commit as a root commit.
 if ! g rev-parse --verify --quiet "$COMMIT^1" >/dev/null 2>&1 && is_shallow
 then
   g fetch --no-tags --quiet --deepen=1 origin "$COMMIT" >/dev/null 2>&1 ||
@@ -57,8 +64,10 @@ else
   }
 fi
 
+# busybox grep matches every line when the -f pattern file is empty.
 [ -s "$TMP_DIR/diff" ] || exit 0
 
+# $* is unquoted so each source_files entry splits and expands, as with cp in entrypoint.sh.
 find $* \( -type f -o -type l \) 2>/dev/null | sed 's|^\./||' > "$TMP_DIR/found"
 
 grep -Fx -f "$TMP_DIR/diff" "$TMP_DIR/found" || true

@@ -16,23 +16,23 @@ shift 2
 
 cd "$SOURCE_FOLDER" || exit 1
 
-g() {
+git_src() {
   GIT_TERMINAL_PROMPT=0 git -c safe.directory='*' -c core.quotepath=off "$@"
 }
 
 is_shallow() {
-  [ "$(g rev-parse --is-shallow-repository 2>/dev/null)" = true ]
+  [ "$(git_src rev-parse --is-shallow-repository 2>/dev/null)" = true ]
 }
 
 TMP_DIR=$(mktemp -d) || exit 1
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-if ! g rev-parse --verify --quiet "$SOURCE_COMMIT^{commit}" >/dev/null 2>&1 && is_shallow
+if ! git_src rev-parse --verify --quiet "$SOURCE_COMMIT^{commit}" >/dev/null 2>&1 && is_shallow
 then
-  g fetch --no-tags --quiet --depth=2 origin "$SOURCE_COMMIT" >/dev/null 2>&1
+  git_src fetch --no-tags --quiet --depth=2 origin "$SOURCE_COMMIT" >/dev/null 2>&1
 fi
 
-if ! COMMIT=$(g rev-parse --verify --quiet "$SOURCE_COMMIT^{commit}" 2>/dev/null)
+if ! COMMIT=$(git_src rev-parse --verify --quiet "$SOURCE_COMMIT^{commit}" 2>/dev/null)
 then
   echo "Error: commit '$SOURCE_COMMIT' not found in $SOURCE_FOLDER" >&2
   exit 1
@@ -41,15 +41,15 @@ fi
 # In a shallow clone the boundary commit has no parent and looks like a root commit.
 # Fetch the parent, and fail below if it is still missing
 # rather than treat the commit as a root commit.
-if ! g rev-parse --verify --quiet "$COMMIT^1" >/dev/null 2>&1 && is_shallow
+if ! git_src rev-parse --verify --quiet "$COMMIT^1" >/dev/null 2>&1 && is_shallow
 then
-  g fetch --no-tags --quiet --deepen=1 origin "$COMMIT" >/dev/null 2>&1 ||
-    g fetch --no-tags --quiet --depth=2 origin "$COMMIT" >/dev/null 2>&1
+  git_src fetch --no-tags --quiet --deepen=1 origin "$COMMIT" >/dev/null 2>&1 ||
+    git_src fetch --no-tags --quiet --depth=2 origin "$COMMIT" >/dev/null 2>&1
 fi
 
-if g rev-parse --verify --quiet "$COMMIT^1" >/dev/null 2>&1
+if git_src rev-parse --verify --quiet "$COMMIT^1" >/dev/null 2>&1
 then
-  g diff --name-only --relative --diff-filter=d "$COMMIT^1" "$COMMIT" > "$TMP_DIR/diff" || {
+  git_src diff --name-only --relative --diff-filter=d "$COMMIT^1" "$COMMIT" > "$TMP_DIR/diff" || {
     echo "Error: could not diff commit '$COMMIT'" >&2
     exit 1
   }
@@ -58,7 +58,7 @@ then
   echo "Error: could not fetch the parent of commit '$COMMIT' in this shallow checkout" >&2
   exit 1
 else
-  g diff-tree --root -r --no-commit-id --name-only --relative --diff-filter=d "$COMMIT" > "$TMP_DIR/diff" || {
+  git_src diff-tree --root -r --no-commit-id --name-only --relative --diff-filter=d "$COMMIT" > "$TMP_DIR/diff" || {
     echo "Error: could not list files of commit '$COMMIT'" >&2
     exit 1
   }

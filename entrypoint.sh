@@ -75,7 +75,12 @@ then
   esac
   # Left unquoted so find sees the same word-splitting and globbing as the cp above.
   # Filenames containing newlines are not handled.
-  { find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true; } \
+  { if [ -n "$INPUT_SOURCE_COMMIT" ]
+    then
+      cat "$SELECTED_FILES" 2>/dev/null || true
+    else
+      find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true
+    fi; } \
     | sed "s#^\./##; s#^#$SOURCE_PREFIX#; s#//*#/#g" > "$SYNCED_FILES_LIST" || true
 fi
 cd -

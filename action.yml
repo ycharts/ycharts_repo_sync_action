@@ -40,6 +40,9 @@ inputs:
     description: 'Whether to close open pull requests in the destination repository whose title contains destination_head_branch before creating the new one'
     required: false
     default: true
+  source_commit:
+    description: 'Commit SHA, e.g. github.sha. When set, only files the commit added or modified (compared to its first parent) are copied, still filtered by source_folder and source_files'
+    required: false
 runs:
   using: 'docker'
   image: 'Dockerfile'

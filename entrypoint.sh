@@ -54,7 +54,7 @@ then
   /commit_files.sh . "$INPUT_SOURCE_COMMIT" $INPUT_SOURCE_FILES > "$SELECTED_FILES"
   set +f
   while IFS= read -r f; do
-    cp --parents "$f" "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+    cp -P --parents "$f" "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
   done < "$SELECTED_FILES"
 else
   cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"

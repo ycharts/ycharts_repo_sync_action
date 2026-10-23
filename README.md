@@ -43,7 +43,7 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pull_request_reviewers: [optional] The pull request reviewers. It can be only one (just like 'reviewer') or many (just like 'reviewer1,reviewer2,...')
 * pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning.
 * close_existing_pull_requests: [optional] Set to `false` to leave open the pull requests in the destination repository whose title contains `destination_head_branch`. When `true`, the action closes them before it creates the new pull request. Default is `true`.
-* source_commit: [optional] A commit hash, usually `${{ github.sha }}`. When set, only the files the commit added or modified, compared with its first parent, are copied, filtered by `source_folder` and `source_files`. For a merge commit, that is every file the merged branch brought in. Deleted files are not removed from the destination. A shallow checkout is fine, because the action fetches the parent; with rebase-and-merge or a multi-commit push, only that one commit's files are copied. Default is empty, which copies every file matching `source_files`.
+* source_commit: [optional] A commit hash, usually `${{ github.sha }}`. When set, only the files the commit added or modified, compared with its first parent, are copied, filtered by `source_folder` and `source_files`. Deleted files are not removed from the destination. Default is empty, which copies every file matching `source_files`.
 
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:

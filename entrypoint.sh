@@ -6,19 +6,19 @@ set -x
 if [ -z "$INPUT_SOURCE_FOLDER" ]
 then
   echo "Source folder must be defined"
-  return -1
+  exit 1
 fi
 
 if [ -z "$INPUT_SOURCE_FILES" ]
 then
   echo "Source files must be defined"
-  return -1
+  exit 1
 fi
 
-if [ $INPUT_DESTINATION_HEAD_BRANCH == "main" ] || [ $INPUT_DESTINATION_HEAD_BRANCH == "master"]
+if [ "$INPUT_DESTINATION_HEAD_BRANCH" = main ] || [ "$INPUT_DESTINATION_HEAD_BRANCH" = master ]
 then
   echo "Destination head branch cannot be 'main' nor 'master'"
-  return -1
+  exit 1
 fi
 
 INPUT_DESTINATION_HEAD_BRANCH_PREFIX="$INPUT_DESTINATION_HEAD_BRANCH"

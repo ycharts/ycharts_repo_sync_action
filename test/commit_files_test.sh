@@ -125,8 +125,9 @@ test_no_match() {
   write a.txt; write b.md; commit_all one
   write b.md changed; commit_all two
   out=$("$COMMIT_FILES" . "$(git rev-parse HEAD)" '*.txt' 2>/dev/null)
+  status=$?
   check "no match output empty" "" "$out"
-  check "no match exit 0" "0" "$?"
+  check "no match exit 0" "0" "$status"
 }
 
 test_outside_folder_only() {
@@ -134,8 +135,9 @@ test_outside_folder_only() {
   write src/a; write src/b; write out; commit_all one
   write out changed; commit_all two
   out=$("$COMMIT_FILES" src "$(git rev-parse HEAD)" '*' 2>/dev/null)
+  status=$?
   check "only outside source folder output empty" "" "$out"
-  check "only outside source folder exit 0" "0" "$?"
+  check "only outside source folder exit 0" "0" "$status"
 }
 
 test_invalid_sha() {

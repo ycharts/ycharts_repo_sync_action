@@ -47,7 +47,18 @@ git clone "https://$API_TOKEN_GITHUB@github.com/$INPUT_DESTINATION_REPO.git" "$C
 echo "Copying contents to git repo"
 mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
 cd $INPUT_SOURCE_FOLDER
-cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+if [ -n "$INPUT_SOURCE_COMMIT" ]
+then
+  SELECTED_FILES=$(mktemp)
+  set -f
+  /commit_files.sh . "$INPUT_SOURCE_COMMIT" $INPUT_SOURCE_FILES > "$SELECTED_FILES"
+  set +f
+  while IFS= read -r f; do
+    cp --parents "$f" "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+  done < "$SELECTED_FILES"
+else
+  cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+fi
 cd -
 cd "$CLONE_DIR"
 git checkout -b "$INPUT_DESTINATION_HEAD_BRANCH"

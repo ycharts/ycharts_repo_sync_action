@@ -63,6 +63,26 @@ then
 else
   cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
 fi
+SYNCED_FILES_LIST=""
+if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+then
+  SYNCED_FILES_LIST="$CLONE_DIR.synced_files"
+  # describe_pr.sh needs paths relative to the source repo root, not INPUT_SOURCE_FOLDER.
+  SOURCE_PREFIX=$(printf '%s\n' "$INPUT_SOURCE_FOLDER" | sed "s#^${GITHUB_WORKSPACE:-/nonexistent}/##; s#//*#/#g; s#^\./##; s#/\$##")
+  case "$SOURCE_PREFIX" in
+    "" | ".") SOURCE_PREFIX="" ;;
+    *) SOURCE_PREFIX="$SOURCE_PREFIX/" ;;
+  esac
+  # Left unquoted so find sees the same word-splitting and globbing as the cp above.
+  # Filenames containing newlines are not handled.
+  { if [ -n "$INPUT_SOURCE_COMMIT" ]
+    then
+      cat "$SELECTED_FILES" 2>/dev/null || true
+    else
+      find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true
+    fi; } \
+    | sed "s#^\./##; s#^#$SOURCE_PREFIX#; s#//*#/#g" > "$SYNCED_FILES_LIST" || true
+fi
 cd -
 cd "$CLONE_DIR"
 git checkout -b "$INPUT_DESTINATION_HEAD_BRANCH"
@@ -83,11 +103,39 @@ then
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"
-  gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
-               --body $INPUT_DESTINATION_HEAD_BRANCH \
-               --base $INPUT_DESTINATION_BASE_BRANCH \
-               --head $INPUT_DESTINATION_HEAD_BRANCH \
-                  $PULL_REQUEST_REVIEWERS
+  PR_GENERATED=false
+  if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+  then
+    echo "Generating pull request description"
+    set +x
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_WORKSPACE" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST")
+    then
+      PR_GENERATED=true
+    else
+      echo "Warning: could not generate the pull request description, using the default title and body"
+    fi
+    set -x
+  fi
+  if [ "$PR_GENERATED" = true ]
+  then
+    PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH: $(printf '%s\n' "$GENERATED" | head -n 1)"
+    PR_BODY_FILE="$CLONE_DIR.pr_body"
+    {
+      printf '%s\n' "$GENERATED" | tail -n +2
+      printf '\nSource commit: https://github.com/%s/commit/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+    } > "$PR_BODY_FILE"
+    gh pr create --title "$PR_TITLE" \
+                 --body-file "$PR_BODY_FILE" \
+                 --base $INPUT_DESTINATION_BASE_BRANCH \
+                 --head $INPUT_DESTINATION_HEAD_BRANCH \
+                    $PULL_REQUEST_REVIEWERS
+  else
+    gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
+                 --body $INPUT_DESTINATION_HEAD_BRANCH \
+                 --base $INPUT_DESTINATION_BASE_BRANCH \
+                 --head $INPUT_DESTINATION_HEAD_BRANCH \
+                    $PULL_REQUEST_REVIEWERS
+  fi
   # Labels are added one at a time after creation, not with `gh pr create --label`,
   # because a label missing from the destination repo would fail the whole create.
   # The `if !` guard keeps a failed label from aborting the script under `set -e`.

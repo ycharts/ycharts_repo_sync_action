@@ -33,6 +33,9 @@ inputs:
   pull_request_reviewers:
     description: 'Pull request reviewers users'
     required: false
+  pull_request_labels:
+    description: 'Comma-separated labels to add to the pull request. Labels missing from the destination repository are skipped with a warning'
+    required: false
 runs:
   using: 'docker'
   image: 'Dockerfile'

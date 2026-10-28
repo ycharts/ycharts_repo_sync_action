@@ -70,6 +70,24 @@ then
                --base $INPUT_DESTINATION_BASE_BRANCH \
                --head $INPUT_DESTINATION_HEAD_BRANCH \
                   $PULL_REQUEST_REVIEWERS
+  # Labels are added one at a time after creation, not with `gh pr create --label`,
+  # because a label missing from the destination repo would fail the whole create.
+  # The `if !` guard keeps a failed label from aborting the script under `set -e`.
+  if [ -n "$INPUT_PULL_REQUEST_LABELS" ]
+  then
+    echo "Adding labels to the pull request"
+    echo "$INPUT_PULL_REQUEST_LABELS" | tr ',' '\n' | while IFS= read -r label; do
+      label=$(echo "$label" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      if [ -z "$label" ]
+      then
+        continue
+      fi
+      if ! gh pr edit "$INPUT_DESTINATION_HEAD_BRANCH" --add-label "$label"
+      then
+        echo "Warning: could not add label '$label' to the pull request, skipping"
+      fi
+    done
+  fi
 else
   echo "No changes detected"
 fi

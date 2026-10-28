@@ -36,6 +36,10 @@ inputs:
   pull_request_labels:
     description: 'Comma-separated labels to add to the pull request. Labels missing from the destination repository are skipped with a warning'
     required: false
+  close_existing_pull_requests:
+    description: 'Whether to close open pull requests in the destination repository whose title contains destination_head_branch before creating the new one'
+    required: false
+    default: true
 runs:
   using: 'docker'
   image: 'Dockerfile'

@@ -17,6 +17,7 @@ This GitHub Action copies a folder from the current repository to a location in 
           uses: ./.github/actions/pull-request-another-repo-action
           env:
             API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
+            ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           with:
             source_folder: 'source-folder'
             destination_repo: 'user-name/repository-name'
@@ -27,6 +28,8 @@ This GitHub Action copies a folder from the current repository to a location in 
             user_name: 'user-name'
             pull_request_reviewers: 'reviewers'
             pull_request_labels: 'label1,label2'
+            generate_pr_description: true
+            pr_description_exclude: 'dist/**,**/*.snap'
 
 ## Variables
 * source_folder: The folder to be moved. Uses the same syntax as the `cp` command. Incude the path for any files not in the repositories root directory.
@@ -37,7 +40,10 @@ This GitHub Action copies a folder from the current repository to a location in 
 * destination_base_branch: [optional] The branch into which you want your code merged. Default is `main`.
 * destination_head_branch: The branch to create to push the changes. Cannot be `master` or `main`.
 * pull_request_reviewers: [optional] The pull request reviewers. It can be only one (just like 'reviewer') or many (just like 'reviewer1,reviewer2,...')
-* pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning.
+* pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning. When set, these labels also decide which existing pull requests the action closes (see Behavior Notes).
+* generate_pr_description: [optional] Set to `true` to generate the pull request title and description with the Claude API. Default is `false`. See Pull request description below.
+* anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
+* pr_description_exclude: [optional] Comma-separated globs of files to leave out of the diff sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat.
 
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:
@@ -45,6 +51,35 @@ This GitHub Action copies a folder from the current repository to a location in 
 
 > You must select the scopes: 'repo = Full control of private repositories', 'admin:org = read:org' and 'write:discussion = Read:discussion'; 
 
+* ANTHROPIC_API_KEY: [optional] Anthropic API key, required only when `generate_pr_description` is `true`. Store it as a secret.
+
 
 ## Behavior Notes
 The action will create any destination paths if they don't exist. It will also overwrite existing files if they already exist in the locations being copied to. It will not delete the entire destination repository.
+
+### Existing pull requests
+When the action has changes to push, it closes the open pull requests in the destination repository that an earlier run created, then opens a new one. It finds them this way:
+
+* If `pull_request_labels` is set, every open pull request that has all of the labels.
+* Otherwise, every open pull request whose title contains `destination_head_branch`.
+
+Either search looks at up to 100 pull requests. A pull request that can't be closed is skipped with a warning. The action records the title and body of the 10 most recently created pull requests it closed for the description step.
+
+### Pull request description
+By default the pull request title is `destination_head_branch` and the body is the previous pull request's body, so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
+
+* The title is `<destination_head_branch>: <generated title>`. It summarizes the changes of the closed pull requests plus the current change.
+* The body is the body of the most recent closed pull request, then a `---` line, then a generated section that describes only the current changes. If there is no earlier pull request, or its body is empty or just the branch name, the body is a full generated description.
+* The body ends with a link to the source commit.
+
+What is sent to Anthropic:
+
+* The titles and bodies of the closed pull requests, newest first (up to 30 KB).
+* The diff the new pull request makes against the destination branch (up to 200 KB), and a diff of only the latest push's changes to the synced files (up to 100 KB).
+* The source commit messages (up to 50 commits and 20 KB), a stat of the whole source change, and a diff of source changes outside the synced files (up to 100 KB), marked as not part of the pull request.
+
+The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing event payload, or a force push where `before` is not an ancestor, the range is the pushed commit alone. `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`. If the base commit can't be reached, the context diffs are skipped with a warning and the description is built from the synced diff.
+
+The diffs leave out `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map` at any depth, plus anything matching `pr_description_exclude`. When the destination diff is larger than 200 KB, the body ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
+
+If generation fails for any reason (missing `ANTHROPIC_API_KEY`, an API error, unparseable output), the action logs a warning and uses the default title with the previous body. It picks the most recent closed pull request whose body is not empty or just the branch name, and adds a `---` line and a `Source commit:` link. With no such pull request, the body is `destination_head_branch`.

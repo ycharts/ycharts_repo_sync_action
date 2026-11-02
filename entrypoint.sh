@@ -41,8 +41,12 @@ export GITHUB_TOKEN=$API_TOKEN_GITHUB
 git config --global user.email "$INPUT_USER_EMAIL"
 git config --global user.name "$INPUT_USER_NAME"
 
+# Authenticate git through gh's credential helper rather than a token in the clone URL: libcurl 8.23 only sends
+# URL credentials on the first request, so the clone 401s partway through.
+gh auth setup-git
+
 echo "Cloning destination git repository"
-git clone "https://$API_TOKEN_GITHUB@github.com/$INPUT_DESTINATION_REPO.git" "$CLONE_DIR"
+git clone "https://github.com/$INPUT_DESTINATION_REPO.git" "$CLONE_DIR"
 
 echo "Copying contents to git repo"
 mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/

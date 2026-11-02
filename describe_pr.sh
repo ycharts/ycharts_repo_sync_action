@@ -279,7 +279,7 @@ then
   PROMPT_TITLE=' Write a concise, specific title under about 70 characters, without any branch name, that summarizes the changes of the earlier pull requests plus the current change.'
   if [ "$KEEP_PREVIOUS_BODY" = true ]
   then
-    PROMPT_BODY=' Write a markdown body that describes ONLY the current changes (the current synced diff when provided, otherwise the latest source commit messages), as a section that will be appended to the existing description of the most recent earlier pull request. Do not repeat or summarize the earlier descriptions or the earlier changes, and do not add a heading for the whole pull request. Use the context diff and commit messages to explain why the current changes were made. You may mention related source changes that are not part of this pull request in at most one brief line.'
+    PROMPT_BODY=' Write a markdown body that describes ONLY the current changes (the current synced diff when provided, otherwise the latest source commit messages), as a section that will be appended to the existing description of the most recent earlier pull request that has a real description (not just its branch name). Do not repeat or summarize the earlier descriptions or the earlier changes, and do not add a heading for the whole pull request. Use the context diff and commit messages to explain why the current changes were made. You may mention related source changes that are not part of this pull request in at most one brief line.'
   fi
 fi
 SYSTEM_PROMPT="$PROMPT_INTRO$PROMPT_TITLE$PROMPT_BODY$PROMPT_TAIL"

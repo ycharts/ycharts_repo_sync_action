@@ -67,7 +67,7 @@ When the action has changes to push, it closes the open pull requests in the des
 
 Either search looks at up to 100 pull requests. A pull request that can't be closed is skipped with a warning. The action records the title and body of the 10 newest matched pull requests for the description step, including any that failed to close.
 
-> A label shared with other workflows, or with pull requests that target the same repository, makes the action close those pull requests too. Use labels only this action applies.
+> A label shared with other workflows, or with pull requests that target the same repository, makes the action close those pull requests too. Use labels only this action applies. With no labels, any open pull request whose title contains `destination_head_branch` is closed, even one this action didn't open.
 
 ### Pull request description
 By default the pull request title is `destination_head_branch` and the body is the previous pull request's body, so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
@@ -91,4 +91,7 @@ If generation fails for any reason (missing `ANTHROPIC_API_KEY`, an API error, u
 ### Previous body
 The previous body comes from the newest closed pull request with a real description. A body that is empty or just the branch name doesn't count. This applies whether or not generation succeeded.
 
-A body is capped at about 60,000 bytes. If adding to the previous body would exceed that, the new pull request starts fresh: the previous body is dropped and an `Earlier updates: #N` link to that pull request is added in its place.
+Nothing caps the body as a whole. The 60,000-byte limit only decides whether the previous body is kept, and it applies whether or not generation succeeded:
+
+* If generation succeeds and the previous body, the `---` line, and the generated section would exceed the limit, the body is the generated section followed by an `Earlier updates: #N` link, without the previous body.
+* If generation is off or fails and the previous body is too large, the body is an `Earlier updates: #N` link followed by the `Source commit:` link.

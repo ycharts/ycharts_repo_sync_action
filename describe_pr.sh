@@ -3,11 +3,11 @@
 set +x
 set -u
 
-# Usage: describe_pr.sh SOURCE_REPO SOURCE_SHA [SOURCE_DIR [EVENT_PATH [SYNCED_FILES_LIST]]]
+# Usage: describe_pr.sh SOURCE_REPO SOURCE_SHA [SOURCE_DIR [EVENT_PATH [SYNCED_FILES_LIST [PREVIOUS_PRS]]]]
 #   SOURCE_DIR: checkout of the source repository (GITHUB_WORKSPACE).
 #   EVENT_PATH: GitHub event payload JSON; its `.before` starts the source commit range.
 #   SYNCED_FILES_LIST: file with one repo-root-relative path per line for the files this PR syncs.
-#   PREVIOUS_PRS: JSON array of the closed PRs this one replaces, newest first,
+#   PREVIOUS_PRS: file with a JSON array of the closed PRs this one replaces, newest first,
 #     each {number, title, body, headRefName, createdAt}.
 #     A missing or unreadable file, invalid JSON, or an empty array describes the PR as if there were none.
 # Env: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL (default claude-opus-5-5),
@@ -57,10 +57,12 @@ if [ -n "$PREVIOUS_PRS" ] && [ -r "$PREVIOUS_PRS" ] \
   && jq -e 'type == "array" and length > 0 and all(.[]; type == "object")' "$PREVIOUS_PRS" >/dev/null 2>&1
 then
   HAS_PREVIOUS=true
+  # PRs are newest first, so the byte cap drops the oldest.
   jq -r '.[] | "### Pull request #" + ((.number // "") | tostring) + ": " + (.title // "") + "\n" + ((.body // "") | tostring) + "\n"' \
     "$PREVIOUS_PRS" | head -c "$MAX_PREVIOUS_PRS_BYTES" > "$WORK_DIR/previous_prs.txt" || true
   jq -r '.[0].body // "" | tostring | sub("[[:space:]]+$"; "")' "$PREVIOUS_PRS" > "$WORK_DIR/previous_body.txt" 2>/dev/null || true
   PREVIOUS_BRANCH=$(jq -r '.[0].headRefName // "" | tostring | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")' "$PREVIOUS_PRS" 2>/dev/null) || PREVIOUS_BRANCH=""
+  # A body equal to the branch name is the action's default body, not a description worth keeping.
   PREVIOUS_BODY_TRIMMED=$(sed 's/^[[:space:]]*//' "$WORK_DIR/previous_body.txt")
   if [ -n "$PREVIOUS_BODY_TRIMMED" ] && [ "$PREVIOUS_BODY_TRIMMED" != "$PREVIOUS_BRANCH" ]
   then
@@ -113,6 +115,7 @@ git_src() {
 }
 
 # Called with the exclusion pathspecs as arguments; `set --` here only changes the function's own list.
+# Must run before the synced files join the caller's "$@" as excludes.
 current_synced_diff() {
   while IFS= read -r FILE || [ -n "$FILE" ]
   do

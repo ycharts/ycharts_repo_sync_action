@@ -14,6 +14,7 @@ fi
 
 FIELDS="number,title,body,headRefName,createdAt"
 
+# Label flags collect in "$@" so a label containing spaces stays one argument.
 set --
 OLD_IFS=$IFS
 IFS=','
@@ -31,6 +32,7 @@ else
   LIST=$(gh pr list --state open --search "is:pr is:open $TITLE_PREFIX in:title" --limit 100 --json "$FIELDS") || exit 1
 fi
 
+# Every match is closed, but only the 10 newest are recorded for the description prompt.
 printf '%s\n' "$LIST" | jq 'sort_by(.createdAt) | reverse | .[:10]' > "$OUTPUT" || exit 1
 
 NUMBERS=$(printf '%s\n' "$LIST" | jq -r '.[].number') || exit 1

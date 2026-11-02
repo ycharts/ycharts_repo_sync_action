@@ -755,6 +755,13 @@ previous_fixture() {
   ]'
 }
 
+previous_fixture_all_default() {
+  jq -n --arg b1 "$1" '[
+    {number: 12, title: "Newest earlier title", body: $b1, headRefName: "sync-new"},
+    {number: 11, title: "Older earlier title", body: "sync-old", headRefName: "sync-old"}
+  ]'
+}
+
 setup_previous_source() {
   commit_files synced.txt
   src_init
@@ -852,7 +859,7 @@ test_current_synced_diff_applies_exclusion_globs() {
   assert_not_in_current "UNIQUE_synced_lock"
 }
 
-test_no_current_synced_diff_without_synced_files_or_previous_prs() {
+test_no_current_synced_diff_without_synced_files() {
   setup_previous_source
   write_synced_list
   write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
@@ -860,6 +867,114 @@ test_no_current_synced_diff_without_synced_files_or_previous_prs() {
   assert_success_with_title
   assert_prompt_contains "<previous_pull_requests>"
   assert_prompt_lacks "<current_synced_diff>"
+}
+
+test_no_current_synced_diff_without_previous_prs() {
+  setup_previous_source
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_lacks "<previous_pull_requests>"
+  assert_prompt_lacks "<current_synced_diff>"
+}
+
+test_empty_current_synced_diff_is_not_flagged_as_present() {
+  commit_files synced.txt
+  src_init
+  src_commit "unsynced only" unsynced.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list synced.txt
+  write_response end_turn "$good_text"
+  write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "<previous_pull_requests>"
+  assert_prompt_lacks "<current_synced_diff>"
+  assert_prompt_contains "unsynced only"
+}
+
+test_previous_prs_truncation_note_only_when_cut() {
+  setup_previous_source
+  write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_lacks "The list below was truncated"
+  big=$(head -c 40000 /dev/zero | tr '\0' 'x')
+  write_previous "$(previous_fixture "$big" sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "The list below was truncated and is incomplete"
+}
+
+test_older_real_body_is_kept_when_newest_has_default_body() {
+  setup_previous_source
+  write_previous "$(previous_fixture 'sync-new' sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_eq "Older earlier body" "$(sed -n 2p "$OUT")" "older body kept"
+  assert_eq "---" "$(sed -n 4p "$OUT")" "separator"
+  assert_eq "## Summary" "$(sed -n 6p "$OUT")" "generated section"
+  assert_system_contains "describes ONLY the current changes"
+}
+
+test_body_equal_to_branch_apart_from_trailing_newline_is_default() {
+  setup_previous_source
+  write_previous "$(previous_fixture 'sync-new
+
+' ' sync-new ')"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_eq "Older earlier body" "$(sed -n 2p "$OUT")" "newest default body skipped"
+  assert_file_lacks "$OUT" "sync-new" "default body not kept"
+}
+
+test_all_default_bodies_produce_generated_body_alone() {
+  setup_previous_source
+  write_previous "$(jq -n '[{number: 12, title: "t", body: "sync-a\n", headRefName: "sync-a"}, {number: 11, title: "u", body: "", headRefName: "sync-b"}]')"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_eq "## Summary" "$(sed -n 2p "$OUT")" "generated body alone"
+  assert_system_lacks "describes ONLY the current changes"
+}
+
+test_over_cap_body_starts_fresh_with_earlier_updates_line() {
+  setup_previous_source
+  big=$(head -c 61000 /dev/zero | tr '\0' 'x')
+  write_previous "$(previous_fixture "$big" sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_eq "## Summary" "$(sed -n 2p "$OUT")" "generated section first"
+  assert_file_lacks "$OUT" "xxxxxxxxxx" "previous body not kept"
+  assert_file_lacks "$OUT" "---" "no separator"
+  assert_eq "Earlier updates: #12" "$(tail -n 1 "$OUT")" "earlier updates line"
+  size=$(wc -c < "$OUT" | tr -d ' ')
+  [ "$size" -lt 60000 ] || fail_assert "output too large: $size"
+}
+
+test_over_cap_body_keeps_partial_note_before_earlier_updates_line() {
+  setup_previous_source
+  big=$(head -c 61000 /dev/zero | tr '\0' 'x')
+  write_previous "$(previous_fixture "$big" sync-new)"
+  (
+    cd "$REPO" || exit 1
+    head -c 250000 /dev/zero | tr '\0' 'z' > huge.txt
+    git add huge.txt
+    git commit -q --amend -m "huge"
+  )
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_eq "Earlier updates: #12" "$(tail -n 1 "$OUT")" "earlier updates line"
+  assert_file_contains "$OUT" "_Generated from a partial diff" "partial note kept"
+}
+
+test_body_under_cap_is_kept_whole() {
+  setup_previous_source
+  big=$(head -c 50000 /dev/zero | tr '\0' 'x')
+  write_previous "$(previous_fixture "$big" sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_file_lacks "$OUT" "Earlier updates" "no earlier updates line"
+  assert_file_contains "$OUT" "xxxxxxxxxx" "previous body kept"
 }
 
 test_large_current_synced_diff_is_truncated_and_flagged() {
@@ -937,7 +1052,7 @@ test_truncated_diff_note_follows_appended_section() {
 
 test_default_body_previous_pr_produces_generated_body_alone() {
   setup_previous_source
-  write_previous "$(previous_fixture 'sync-new' sync-new)"
+  write_previous "$(previous_fixture_all_default 'sync-new')"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
   assert_eq "## Summary" "$(sed -n 2p "$OUT")" "body is the generated body alone"
@@ -950,7 +1065,7 @@ test_default_body_previous_pr_produces_generated_body_alone() {
 
 test_empty_body_previous_pr_produces_generated_body_alone() {
   setup_previous_source
-  write_previous "$(previous_fixture '  ' sync-new)"
+  write_previous "$(previous_fixture_all_default '  ')"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
   assert_eq "## Summary" "$(sed -n 2p "$OUT")" "body is the generated body alone"
@@ -1026,7 +1141,6 @@ for t in \
   test_previous_prs_beyond_byte_cap_are_cut \
   test_current_synced_diff_is_restricted_to_synced_files \
   test_current_synced_diff_applies_exclusion_globs \
-  test_no_current_synced_diff_without_synced_files_or_previous_prs \
   test_large_current_synced_diff_is_truncated_and_flagged \
   test_system_prompt_switches_wording_with_previous_prs \
   test_output_body_appends_to_previous_body \

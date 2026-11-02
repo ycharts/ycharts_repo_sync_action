@@ -869,14 +869,6 @@ test_no_current_synced_diff_without_synced_files() {
   assert_prompt_lacks "<current_synced_diff>"
 }
 
-test_no_current_synced_diff_without_previous_prs() {
-  setup_previous_source
-  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
-  assert_success_with_title
-  assert_prompt_lacks "<previous_pull_requests>"
-  assert_prompt_lacks "<current_synced_diff>"
-}
-
 test_empty_current_synced_diff_is_not_flagged_as_present() {
   commit_files synced.txt
   src_init
@@ -1141,6 +1133,15 @@ for t in \
   test_previous_prs_beyond_byte_cap_are_cut \
   test_current_synced_diff_is_restricted_to_synced_files \
   test_current_synced_diff_applies_exclusion_globs \
+  test_no_current_synced_diff_without_synced_files \
+  test_empty_current_synced_diff_is_not_flagged_as_present \
+  test_previous_prs_truncation_note_only_when_cut \
+  test_older_real_body_is_kept_when_newest_has_default_body \
+  test_body_equal_to_branch_apart_from_trailing_newline_is_default \
+  test_all_default_bodies_produce_generated_body_alone \
+  test_over_cap_body_starts_fresh_with_earlier_updates_line \
+  test_over_cap_body_keeps_partial_note_before_earlier_updates_line \
+  test_body_under_cap_is_kept_whole \
   test_large_current_synced_diff_is_truncated_and_flagged \
   test_system_prompt_switches_wording_with_previous_prs \
   test_output_body_appends_to_previous_body \

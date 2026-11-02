@@ -91,33 +91,28 @@ then
     fi
     set -x
   fi
+  PR_BODY_FILE="$CLONE_DIR.pr_body"
   if [ "$PR_GENERATED" = true ]
   then
     PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH: $(printf '%s\n' "$GENERATED" | head -n 1)"
-    PR_BODY_FILE="$CLONE_DIR.pr_body"
     {
       printf '%s\n' "$GENERATED" | tail -n +2
       printf '\nSource commit: https://github.com/%s/commit/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
     } > "$PR_BODY_FILE"
-    gh pr create --title "$PR_TITLE" \
-                 --body-file "$PR_BODY_FILE" \
-                 --base $INPUT_DESTINATION_BASE_BRANCH \
-                 --head $INPUT_DESTINATION_HEAD_BRANCH \
-                    $PULL_REQUEST_REVIEWERS
   else
-    PR_BODY_FILE="$CLONE_DIR.pr_body"
+    PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH"
     if /previous_pr_body.sh "$CLOSED_PRS_FILE" "$GITHUB_REPOSITORY" "$GITHUB_SHA" > "$PR_BODY_FILE"
     then
       :
     else
-      printf '%s\n' "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
+      printf '%s' "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
     fi
-    gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
-                 --body-file "$PR_BODY_FILE" \
-                 --base $INPUT_DESTINATION_BASE_BRANCH \
-                 --head $INPUT_DESTINATION_HEAD_BRANCH \
-                    $PULL_REQUEST_REVIEWERS
   fi
+  gh pr create --title "$PR_TITLE" \
+               --body-file "$PR_BODY_FILE" \
+               --base $INPUT_DESTINATION_BASE_BRANCH \
+               --head $INPUT_DESTINATION_HEAD_BRANCH \
+                  $PULL_REQUEST_REVIEWERS
   # Labels are added one at a time after creation, not with `gh pr create --label`,
   # because a label missing from the destination repo would fail the whole create.
   # The `if !` guard keeps a failed label from aborting the script under `set -e`.

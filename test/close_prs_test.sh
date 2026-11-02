@@ -232,6 +232,41 @@ test_previous_body_fails_for_empty_array_null_body_and_missing_file() {
   assert_nonzero "$STATUS" "missing file"
 }
 
+test_wildcard_labels_are_passed_literally() {
+  mkdir -p "$CASE_DIR/cwd"
+  : > "$CASE_DIR/cwd/sync-one"
+  : > "$CASE_DIR/cwd/sync-two"
+  (cd "$CASE_DIR/cwd" && PATH="$BIN:$PATH" sh "$CLOSE" "prefix" "sync-*" "$OUTPUT" > "$OUT" 2> "$ERR")
+  assert_eq 0 "$?" "exit status"
+  assert_file_contains "$GH_LIST_CALLS" "--label sync-* --limit" "literal wildcard"
+  assert_file_lacks "$GH_LIST_CALLS" "sync-one" "no expansion"
+}
+
+test_previous_body_treats_default_body_with_trailing_newline_as_default() {
+  {
+    pr_json 2 2024-02-01T00:00:00Z "$(printf 'branch-2\n')"
+    jq -n '{number: 1, body: "  branch-1 \n\n", headRefName: "branch-1", createdAt: "2024-01-01T00:00:00Z"}'
+    pr_json 0 2023-12-01T00:00:00Z "Real body"
+  } | jq -s . > "$CASE_DIR/closed.json"
+  jq '.[0].body = "branch-2\n"' "$CASE_DIR/closed.json" > "$CASE_DIR/c2.json"
+  run_prev "$CASE_DIR/c2.json"
+  assert_eq 0 "$STATUS" "exit status"
+  assert_file_contains "$OUT" "Real body" "usable body"
+  assert_file_lacks "$OUT" "branch-" "defaults skipped"
+}
+
+test_previous_body_over_cap_starts_fresh() {
+  big=$(head -c 60000 /dev/zero | tr '\0' 'x')
+  {
+    pr_json 7 2024-03-01T00:00:00Z "$big"
+    pr_json 6 2024-02-01T00:00:00Z "Older"
+  } | jq -s . > "$CASE_DIR/closed.json"
+  run_prev "$CASE_DIR/closed.json"
+  assert_eq 0 "$STATUS" "exit status"
+  expected=$(printf 'Earlier updates: #7\n\nSource commit: https://github.com/org/source/commit/abc123')
+  assert_eq "$expected" "$(cat "$OUT")" "fresh body"
+}
+
 run_test() {
   CURRENT="$1"
   TEST_OK=1
@@ -261,7 +296,10 @@ for t in \
   test_previous_body_uses_most_recent_pr_with_source_line \
   test_previous_body_skips_empty_and_default_bodies \
   test_previous_body_fails_when_nothing_usable \
-  test_previous_body_fails_for_empty_array_null_body_and_missing_file
+  test_previous_body_fails_for_empty_array_null_body_and_missing_file \
+  test_wildcard_labels_are_passed_literally \
+  test_previous_body_treats_default_body_with_trailing_newline_as_default \
+  test_previous_body_over_cap_starts_fresh
 do
   run_test "$t"
 done

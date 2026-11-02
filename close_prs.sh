@@ -18,11 +18,13 @@ FIELDS="number,title,body,headRefName,createdAt"
 set --
 OLD_IFS=$IFS
 IFS=','
+set -f
 for label in $LABELS
 do
   label=$(printf '%s' "$label" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$label" ] && set -- "$@" --label "$label"
 done
+set +f
 IFS=$OLD_IFS
 
 if [ $# -gt 0 ]

@@ -105,6 +105,8 @@ then
     then
       :
     else
+      # The default body is the branch name alone;
+      # later runs recognize it by that and don't carry it forward.
       printf '%s' "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
     fi
   fi

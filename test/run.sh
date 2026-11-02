@@ -59,6 +59,8 @@ setup() {
   CAPTURED_STDIN="$CASE_DIR/curl_stdin"
   OUT="$CASE_DIR/stdout"
   ERR="$CASE_DIR/stderr"
+  # EVENT, SYNCED_LIST and PREVIOUS are not reset here and carry over between tests;
+  # a test that needs them unset must unset them itself.
   echo 200 > "$HTTP_STATUS_FILE"
   echo 0 > "$CURL_EXIT_FILE"
 

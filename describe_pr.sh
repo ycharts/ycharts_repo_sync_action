@@ -16,7 +16,9 @@ set -u
 # Without SOURCE_DIR or SOURCE_SHA, only the destination diff is described.
 # Prints the title on line 1 and the body on the following lines.
 # With previous PRs, the title covers their changes plus the current one,
-# and the body is the most recent previous body, a `---` line, then a section for the current changes.
+# and the body is the newest previous body that is not blank or the default (the branch name),
+# a `---` line, then a section for the current changes.
+# If that would exceed MAX_BODY_BYTES, the previous body is replaced by an `Earlier updates: #N` line.
 
 MAX_DIFF_BYTES=200000
 CONTEXT_MAX_DIFF_BYTES=100000
@@ -68,6 +70,8 @@ then
   then
     PREVIOUS_TRUNCATED=true
   fi
+  # Picks the newest PR whose body is not blank or the default body (the branch name).
+  # \A and \z trim only the ends of the whole body; ^ and $ would also match at each line.
   KEPT_FILTER='def trim: sub("\\A[[:space:]]+"; "") | sub("[[:space:]]+\\z"; "");
     [.[] | select(((.body // "") | tostring | trim) as $b | $b != "" and $b != ((.headRefName // "") | tostring | trim))] | .[0]'
   KEPT_NUMBER=$(jq -r "$KEPT_FILTER"' | .number // "" | tostring' "$PREVIOUS_PRS" 2>/dev/null) || KEPT_NUMBER=""

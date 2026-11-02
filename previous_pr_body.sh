@@ -20,6 +20,7 @@ NUMBER=$(jq -r "$PICK | .number // empty" "$CLOSED_PRS_FILE") || exit 1
 SOURCE_LINE="Source commit: https://github.com/$REPOSITORY/commit/$SHA"
 MAX_BODY_BYTES=60000
 
+# Over the cap, link to the earlier PR rather than cutting its body.
 SIZE=$(printf '%s\n\n---\n\n%s\n' "$BODY" "$SOURCE_LINE" | LC_ALL=C wc -c | tr -d ' ')
 if [ "$SIZE" -gt "$MAX_BODY_BYTES" ]
 then

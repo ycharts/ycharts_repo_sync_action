@@ -20,6 +20,7 @@ This GitHub Action copies a folder from the current repository to a location in 
             ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           with:
             source_folder: 'source-folder'
+            source_files: 'file1 dir/file2'
             destination_repo: 'user-name/repository-name'
             destination_folder: 'folder-name'
             destination_base_branch: 'branch-name'
@@ -32,6 +33,7 @@ This GitHub Action copies a folder from the current repository to a location in 
             pr_description_exclude: 'dist/**,**/*.snap'
 
 ## Variables
+* source_files: The files or folders inside `source_folder` to copy, separated by spaces. They are passed to `cp --parents`, so their relative paths are kept in the destination.
 * source_folder: The folder to be moved. Uses the same syntax as the `cp` command. Incude the path for any files not in the repositories root directory.
 * destination_repo: The repository to place the file or directory in.
 * destination_folder: [optional] The folder in the destination repository to place the file in, if not the root directory.
@@ -58,28 +60,35 @@ This GitHub Action copies a folder from the current repository to a location in 
 The action will create any destination paths if they don't exist. It will also overwrite existing files if they already exist in the locations being copied to. It will not delete the entire destination repository.
 
 ### Existing pull requests
-When the action has changes to push, it closes the open pull requests in the destination repository that an earlier run created, then opens a new one. It finds them this way:
+When the action has changes to push, it closes the open pull requests in the destination repository that match the search below, then opens a new one. The action does not check who created a pull request. It finds them this way:
 
 * If `pull_request_labels` is set, every open pull request that has all of the labels.
 * Otherwise, every open pull request whose title contains `destination_head_branch`.
 
-Either search looks at up to 100 pull requests. A pull request that can't be closed is skipped with a warning. The action records the title and body of the 10 most recently created pull requests it closed for the description step.
+Either search looks at up to 100 pull requests. A pull request that can't be closed is skipped with a warning. The action records the title and body of the 10 newest matched pull requests for the description step, including any that failed to close.
+
+> A label shared with other workflows, or with pull requests that target the same repository, makes the action close those pull requests too. Use labels only this action applies.
 
 ### Pull request description
 By default the pull request title is `destination_head_branch` and the body is the previous pull request's body, so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
 
 * The title is `<destination_head_branch>: <generated title>`. It summarizes the changes of the closed pull requests plus the current change.
-* The body is the body of the most recent closed pull request, then a `---` line, then a generated section that describes only the current changes. If there is no earlier pull request, or its body is empty or just the branch name, the body is a full generated description.
-* The body ends with a link to the source commit.
+* The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes. If there is no previous body, the body is a full generated description.
+* The body ends with, in order, the generated content, a note that the diff was truncated (only when it was), and a `Source commit:` link.
 
 What is sent to Anthropic:
 
 * The titles and bodies of the closed pull requests, newest first (up to 30 KB).
-* The diff the new pull request makes against the destination branch (up to 200 KB), and a diff of only the latest push's changes to the synced files (up to 100 KB).
+* The diff the new pull request makes against the destination branch (up to 200 KB), and, only when there are closed pull requests, the synced-files list is non-empty, the source base commit can be reached, and the diff is non-empty, a diff of only the latest push's changes to the synced files (up to 100 KB).
 * The source commit messages (up to 50 commits and 20 KB), a stat of the whole source change, and a diff of source changes outside the synced files (up to 100 KB), marked as not part of the pull request.
 
 The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing event payload, or a force push where `before` is not an ancestor, the range is the pushed commit alone. `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`. If the base commit can't be reached, the context diffs are skipped with a warning and the description is built from the synced diff.
 
-The diffs leave out `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map` at any depth, plus anything matching `pr_description_exclude`. When the destination diff is larger than 200 KB, the body ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
+The diffs leave out `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map` at any depth, plus anything matching `pr_description_exclude`. When the destination diff is larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
 
-If generation fails for any reason (missing `ANTHROPIC_API_KEY`, an API error, unparseable output), the action logs a warning and uses the default title with the previous body. It picks the most recent closed pull request whose body is not empty or just the branch name, and adds a `---` line and a `Source commit:` link. With no such pull request, the body is `destination_head_branch`.
+If generation fails for any reason (missing `ANTHROPIC_API_KEY`, an API error, unparseable output), the action logs a warning and uses the default title with the previous body. It uses the previous body, then adds a `---` line and a `Source commit:` link. With no previous body, the body is `destination_head_branch`.
+
+### Previous body
+The previous body comes from the newest closed pull request with a real description. A body that is empty or just the branch name doesn't count. This applies whether or not generation succeeded.
+
+A body is capped at about 60,000 bytes. If adding to the previous body would exceed that, the new pull request starts fresh: the previous body is dropped and an `Earlier updates: #N` link to that pull request is added in its place.

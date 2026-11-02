@@ -73,10 +73,8 @@ if git status | grep -q "Changes to be committed"
 then
   git commit --message "Update from https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
   echo "Closing existing PRs"
-  gh pr list --search "is:pr is:open $INPUT_DESTINATION_HEAD_BRANCH_PREFIX in:title"| while IFS= read -r line; do
-    prid=$(echo $line | awk '{print $1;}')
-    gh pr close $prid
-  done
+  CLOSED_PRS_FILE="$CLONE_DIR.closed_prs.json"
+  /close_prs.sh "$INPUT_DESTINATION_HEAD_BRANCH_PREFIX" "$INPUT_PULL_REQUEST_LABELS" "$CLOSED_PRS_FILE"
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"
@@ -85,7 +83,7 @@ then
   then
     echo "Generating pull request description"
     set +x
-    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_WORKSPACE" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST")
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_WORKSPACE" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST" "$CLOSED_PRS_FILE")
     then
       PR_GENERATED=true
     else
@@ -107,8 +105,15 @@ then
                  --head $INPUT_DESTINATION_HEAD_BRANCH \
                     $PULL_REQUEST_REVIEWERS
   else
+    PR_BODY_FILE="$CLONE_DIR.pr_body"
+    if /previous_pr_body.sh "$CLOSED_PRS_FILE" "$GITHUB_REPOSITORY" "$GITHUB_SHA" > "$PR_BODY_FILE"
+    then
+      :
+    else
+      printf '%s\n' "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
+    fi
     gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
-                 --body $INPUT_DESTINATION_HEAD_BRANCH \
+                 --body-file "$PR_BODY_FILE" \
                  --base $INPUT_DESTINATION_BASE_BRANCH \
                  --head $INPUT_DESTINATION_HEAD_BRANCH \
                     $PULL_REQUEST_REVIEWERS

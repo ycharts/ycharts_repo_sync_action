@@ -58,9 +58,8 @@ The action is written in Python using only the standard library. Run the tests f
 `entrypoint.py` is the launcher the Docker image runs. The logic lives in the `repo_sync/` package:
 
 - `commands.py`: `CommandRunner` and `CommandError`
-- `git.py` and `github.py`: the `git` and `gh` clients
+- `git.py`: `GitClient` and `GitHubClient`, wrappers over `git` and `gh`
 - `settings.py`: `Settings` and `ConfigError`
-- `files.py`: copying source files into the clone
-- `sync.py`: `RepoSync` and `SyncError`
+- `sync.py`: `RepoSync` (including copying source files into the clone) and `SyncError`
 
 The tests in `tests/` mirror these modules.

@@ -13,6 +13,7 @@ class CommandError(Exception):
 class CommandRunner:
     def __init__(self, token=None, base_env=None):
         self.env = dict(os.environ if base_env is None else base_env)
+        token = token or self.env.get("API_TOKEN_GITHUB")
         # Pass the token through the env, never args:
         # CommandError messages include the args and are printed in ::error:: lines.
         if token:

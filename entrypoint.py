@@ -2,9 +2,8 @@
 import os
 import sys
 
-from repo_sync.commands import CommandError, CommandRunner
-from repo_sync.git import GitClient
-from repo_sync.github import GitHubClient
+from repo_sync.commands import CommandError
+from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import ConfigError, Settings
 from repo_sync.sync import RepoSync, SyncError
 
@@ -18,8 +17,10 @@ def main(env=None, runner=None, clock=None):
     try:
         settings = Settings.from_env(env, now=clock)
         if runner is None:
-            runner = CommandRunner(token=env.get("API_TOKEN_GITHUB"))
-        RepoSync(settings, GitClient(runner), GitHubClient(runner)).run()
+            sync = RepoSync(settings)
+        else:
+            sync = RepoSync(settings, GitClient(runner), GitHubClient(runner))
+        sync.run()
     except ConfigError as exc:
         for message in exc.messages:
             print(f"::error::{escape(message)}", flush=True)

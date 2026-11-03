@@ -5,8 +5,7 @@ import tempfile
 import unittest
 
 from repo_sync.commands import CommandError
-from repo_sync.git import GitClient
-from repo_sync.github import GitHubClient
+from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync
 

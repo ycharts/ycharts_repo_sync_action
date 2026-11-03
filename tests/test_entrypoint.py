@@ -31,7 +31,7 @@ class EntrypointTest(FlowTestCase):
 
     def test_master_rejected(self):
         runner = FakeRunner()
-        code, out = self.main(runner, self.env(INPUT_DESTINATION_HEAD_BRANCH="master"))
+        code, _ = self.main(runner, self.env(INPUT_DESTINATION_HEAD_BRANCH="master"))
         self.assertNotEqual(code, 0)
         self.assertEqual(runner.calls, [])
 

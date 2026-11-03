@@ -47,6 +47,19 @@ class CommandRunnerTest(unittest.TestCase):
         runner = CommandRunner(base_env={"A": "1"})
         self.assertNotIn("GITHUB_TOKEN", runner.env)
 
+    def test_token_falls_back_to_api_token_in_base_env(self):
+        runner = CommandRunner(base_env={"API_TOKEN_GITHUB": "from-env"})
+        self.assertEqual(runner.env["GITHUB_TOKEN"], "from-env")
+
+    def test_explicit_token_overrides_base_env(self):
+        runner = CommandRunner(token="explicit", base_env={"API_TOKEN_GITHUB": "from-env"})
+        self.assertEqual(runner.env["GITHUB_TOKEN"], "explicit")
+
+    def test_default_base_env_is_os_environ(self):
+        with mock.patch.dict("os.environ", {"API_TOKEN_GITHUB": "proc"}):
+            runner = CommandRunner()
+        self.assertEqual(runner.env["GITHUB_TOKEN"], "proc")
+
 
 if __name__ == "__main__":
     unittest.main()

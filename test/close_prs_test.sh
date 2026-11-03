@@ -315,6 +315,8 @@ test_build_failed_with_previous_body() {
   pr_json 3 2024-03-01T00:00:00Z "Old body" | jq -s . > "$CASE_DIR/closed.json"
   printf 'Source commit: https://github.com/org/source/commit/abc123\n' > "$CASE_DIR/section"
   sh "$BUILD" "$CASE_DIR/closed.json" "$CASE_DIR/section" false "my-branch" > "$OUT" 2> "$ERR"
+  STATUS=$?
+  assert_eq 0 "$STATUS" "exit status"
   expected=$(printf 'Old body\n\n---\n\nSource commit: https://github.com/org/source/commit/abc123')
   assert_eq "$expected" "$(cat "$OUT")" "body"
 }

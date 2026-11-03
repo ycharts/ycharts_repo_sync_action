@@ -20,6 +20,7 @@ MAX_SOURCE_COMMITS=50
 MAX_MESSAGES_BYTES=20000
 MAX_STAT_BYTES=20000
 MAX_PREVIOUS_PRS_BYTES=30000
+MAX_API_FILES=300
 
 fail() {
   echo "describe_pr: $1" >&2
@@ -161,8 +162,16 @@ jq -r --rawfile excluded "$WORK_DIR/excluded.txt" '
     )
   | join("\n")' "$WORK_DIR/kept.json" > "$WORK_DIR/diff.txt" || fail "could not render source diff"
 cap "$WORK_DIR/diff.txt" "$MAX_DIFF_BYTES"
+DIFF_CAPPED=$CAP_TRUNCATED
 TRUNCATED=$CAP_TRUNCATED
 FULL_SIZE=$CAP_SIZE
+
+# At the API file limit the synced files may be among the ones not returned.
+SOURCE_FILE_COUNT=$(jq '(.files // []) | length' "$WORK_DIR/source.json") || fail "could not count source files"
+if [ "$SOURCE_FILE_COUNT" -ge "$MAX_API_FILES" ]
+then
+  TRUNCATED=true
+fi
 
 SYSTEM_PROMPT='You write pull request titles and descriptions. A pull request syncs a subset of the files changed in a source repository. The user message can include the commit messages of the latest source push, the diff that push makes to the synced files, a stat of the changes the pull request makes to the destination repository (for scale only), and earlier pull requests that this one replaces, newest first.'
 SYSTEM_PROMPT="$SYSTEM_PROMPT"' Write a concise, specific title under about 70 characters, without any branch name, that summarizes the changes of the earlier pull requests (from their titles and descriptions, when given) plus this push.'
@@ -210,7 +219,7 @@ jq -n \
             + "<previous_pull_requests>\n" + $previous_prs + "</previous_pull_requests>\n\n"
           else "" end)
         + "Stat of the changes this pull request makes to the destination repository (for scale only):\n<diff_stat>\n" + $stat + "</diff_stat>\n\n"
-        + (if ($diff | test("^\\s*$")) then "The latest source push changed none of the synced files.\n\n" else "" end)
+        + (if ($diff | test("^\\s*$")) and $truncated != "true" then "The latest source push changed none of the synced files.\n\n" else "" end)
         + (if $truncated == "true" then "The diff below was truncated and is incomplete.\n" else "" end)
         + "The changes the latest source push makes to the synced files:\n<diff>\n" + $diff + "\n</diff>"
       )
@@ -252,7 +261,10 @@ fi
 
 printf '%s\n' "$TITLE"
 jq -r '.body // ""' "$WORK_DIR/result.json"
-if [ "$TRUNCATED" = true ]
+if [ "$DIFF_CAPPED" = true ]
 then
   printf '\n_Generated from a partial diff (first %s KB of %s KB)._\n' "$((MAX_DIFF_BYTES / 1000))" "$((FULL_SIZE / 1000))"
+elif [ "$TRUNCATED" = true ]
+then
+  printf '\n_Generated from a partial diff (GitHub returned only the first %s files of the push)._\n' "$MAX_API_FILES"
 fi

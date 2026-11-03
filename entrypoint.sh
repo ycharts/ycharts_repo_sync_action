@@ -58,7 +58,7 @@ then
   # safe.directory is needed because the workspace is owned by another user.
   if ! SOURCE_PREFIX=$(git -c safe.directory='*' rev-parse --show-prefix 2>/dev/null)
   then
-    echo "Warning: source_folder is not inside a git repository, describing the pull request without source commits"
+    echo "Warning: source_folder is not inside a git repository, synced paths can't be made relative to the repository root, so the source diff is not filtered to the synced files"
     SOURCE_PREFIX=""
   fi
   # Left unquoted so find sees the same word-splitting and globbing as the cp above.

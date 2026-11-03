@@ -48,12 +48,10 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Each glob is matched against the whole file path using shell `case` rules, so `*` also matches across `/`: `*.snap` matches `.snap` files at any depth and `dist/*` covers everything under `dist`. Avoid `**/*.snap`, which does not match a root-level `a.snap`. Excluded files still appear in the diff stat and as a header line without a patch.
 
 ## ENV
-* API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:
+* API_TOKEN_GITHUB: You must create a personal access token in you account. When `generate_pr_description` is `true`, the token must also be able to read the source repository, because the action reads the source push through the GitHub API. Follow the link:
 - [Personal access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
 
 > You must select the scopes: 'repo = Full control of private repositories', 'admin:org = read:org' and 'write:discussion = Read:discussion'; 
-
-When `generate_pr_description` is `true`, the token must also be able to read the source repository, because the action reads the source push through the GitHub API.
 
 * ANTHROPIC_API_KEY: [optional] Anthropic API key, required only when `generate_pr_description` is `true`. Store it as a secret.
 
@@ -77,18 +75,18 @@ By default the pull request title is `destination_head_branch` and the body is t
 * The title is `<destination_head_branch>: <generated title>`. It summarizes the changes of the closed pull requests plus the current change.
 * The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes, then a `Source commit:` link. If the latest push changed none of the synced files, the generated section is one line saying so. If there is no previous body, the body is the generated section and the link.
 
-The action reads the source push from the GitHub API, not from the local checkout, so `API_TOKEN_GITHUB` must be able to read the source repository as well as write to the destination. The push is `compare/{before}...{sha}`, where `before` comes from the push event. When the push created the branch, was forced, or the event payload is missing, it is the single pushed commit. The compare API returns at most 300 files and 250 commits, so a larger push is described from what it returns.
+The action reads the source push from the GitHub API, not from the local checkout. The source repository is the repository the workflow runs in (`$GITHUB_REPOSITORY` at `$GITHUB_SHA`), and synced paths are taken relative to its root. The push is `compare/{before}...{sha}`, where `before` comes from the push event. When the push created the branch, was forced, or the event payload is missing, it is the single pushed commit. The compare API returns at most 300 files and 250 commits, so a larger push is described from what it returns. At 300 files or more the diff is marked partial, and the "changed none of the synced files" notice is not sent.
 
 What is sent to Anthropic:
 
 * The titles and bodies of the closed pull requests, newest first (up to 30 KB).
 * This push's commit messages (up to 50 commits and 20 KB).
 * This push's per-file patches for the synced files only (up to 200 KB). Files matching the built-in or `pr_description_exclude` globs keep their header line but drop their patch.
-* The diff stat of the new pull request against the destination branch (up to 20 KB).
+* The diff stat of the sync commit against the cloned default branch, as `git diff --stat HEAD~1` reports it (up to 20 KB).
 
-The built-in exclusions are `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` at any depth, and `*.min.js`, `*.min.css`, and `*.map`. When the patches are larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
+The built-in exclusions are `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map`, all matched at any depth. When the patches are larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
 
-If generation fails for any reason (missing `ANTHROPIC_API_KEY`, a failed API call, an Anthropic error, unparseable output), the action logs a warning and uses the default title with the non-generated body: the previous body, a `---` line, and the `Source commit:` link. With no previous body, the body is `destination_head_branch`.
+If generation fails for any reason (missing `ANTHROPIC_API_KEY`, a failed GitHub API call, an Anthropic error, unparseable output), the action logs a warning and uses the default title with the non-generated body: the previous body, a `---` line, and the `Source commit:` link. With no previous body, the body is `destination_head_branch`.
 
 ### Previous body
 The previous body comes from the newest closed pull request with a real description. A body that is empty or just the branch name doesn't count. This applies whether or not generation succeeded.

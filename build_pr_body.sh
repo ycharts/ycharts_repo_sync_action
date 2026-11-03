@@ -1,22 +1,22 @@
 #!/bin/sh
 
-# Usage: build_pr_body.sh CLOSED_PRS_FILE SECTION_FILE GENERATED BRANCH
+# Usage: build_pr_body.sh CLOSED_PRS_FILE SECTION_FILE GENERATION_SUCCEEDED BRANCH
 
 set -u
 
 CLOSED_PRS_FILE=${1:-}
 SECTION_FILE=${2:-}
-GENERATED=${3:-false}
+GENERATION_SUCCEEDED=${3:-false}
 BRANCH=${4:-}
 
 HERE=$(dirname "$0")
 
-if "$HERE/previous_pr_body.sh" "$CLOSED_PRS_FILE" "$SECTION_FILE" 2>/dev/null
+if "$HERE/previous_pr_body.sh" "$CLOSED_PRS_FILE" "$SECTION_FILE"
 then
   exit 0
 fi
 
-if [ "$GENERATED" = true ]
+if [ "$GENERATION_SUCCEEDED" = true ]
 then
   cat "$SECTION_FILE"
 else

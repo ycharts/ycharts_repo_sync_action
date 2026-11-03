@@ -511,6 +511,24 @@ test_no_synced_file_changed_is_stated_in_request() {
   assert_system_contains "one sentence saying so"
 }
 
+test_files_limit_without_synced_match_is_partial_not_empty() {
+  set_gh_commit "$(for i in $(seq 1 300); do mkfile "other$i.txt"; done | jq -sc .)"
+  write_synced_list synced.txt
+  run_ok
+  assert_prompt_lacks "changed none of the synced files"
+  assert_prompt_contains "The diff below was truncated and is incomplete."
+  assert_file_contains "$OUT" "partial diff" "partial note"
+}
+
+test_below_files_limit_without_synced_match_keeps_empty_notice() {
+  set_gh_commit "$(for i in $(seq 1 299); do mkfile "other$i.txt"; done | jq -sc .)"
+  write_synced_list synced.txt
+  run_ok
+  assert_prompt_contains "The latest source push changed none of the synced files."
+  assert_prompt_lacks "The diff below was truncated"
+  assert_file_lacks "$OUT" "partial diff" "partial note"
+}
+
 test_synced_files_present_has_no_empty_notice() {
   run_ok
   assert_prompt_lacks "changed none of the synced files"

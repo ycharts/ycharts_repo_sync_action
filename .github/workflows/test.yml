@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Keeps the token out of .git/config, which is part of the Docker build context.
           persist-credentials: false
       - run: docker build -t repo-sync-action:test .
       - run: docker run --rm --entrypoint sh repo-sync-action:test -c 'python3 --version && git --version && gh --version'

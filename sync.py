@@ -190,12 +190,16 @@ def _is_within(path, root):
 
 
 def _copy_file(source, target):
+    # Unlink a destination symlink first, so copy2 can't write through it
+    # to a file outside the repo.
     if os.path.lexists(target) and (os.path.islink(target) or os.path.islink(source)):
         os.unlink(target)
     shutil.copy2(source, target, follow_symlinks=False)
 
 
 def _clear_symlink_targets(source_dir, target_dir):
+    # copytree(symlinks=True) creates links with os.symlink,
+    # which fails if the destination entry already exists.
     for dirpath, dirnames, filenames in os.walk(source_dir):
         relative = os.path.relpath(dirpath, source_dir)
         for name in dirnames + filenames:
@@ -227,6 +231,8 @@ class RepoSync:
                 if not matches:
                     raise SyncError(f"source file pattern '{pattern}' matched nothing in {self.settings.source_folder}")
                 for match in matches:
+                    # Copy the unresolved path so a symlink stays a link, never followed.
+                    # The realpath check only rejects links that point outside the source.
                     lexical = os.path.join(source_root, match)
                     current = lexical
                     if not _is_within(os.path.realpath(lexical), source_root):

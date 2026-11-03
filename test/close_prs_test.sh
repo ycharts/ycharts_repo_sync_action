@@ -5,6 +5,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CLOSE="$ROOT/close_prs.sh"
 PREV="$ROOT/previous_pr_body.sh"
+BUILD="$ROOT/build_pr_body.sh"
 SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
 
@@ -288,6 +289,52 @@ test_previous_body_over_cap_starts_fresh() {
   assert_eq "$expected" "$(cat "$OUT")" "fresh body"
 }
 
+run_build() {
+  printf 'Generated section\n\nSource commit: https://github.com/org/source/commit/abc123\n' > "$CASE_DIR/section"
+  sh "$BUILD" "$CASE_DIR/closed.json" "$CASE_DIR/section" "$1" "my-branch" > "$OUT" 2> "$ERR"
+  STATUS=$?
+}
+
+test_build_generated_with_previous_body() {
+  pr_json 3 2024-03-01T00:00:00Z "Old body" | jq -s . > "$CASE_DIR/closed.json"
+  run_build true
+  assert_eq 0 "$STATUS" "exit status"
+  expected=$(printf 'Old body\n\n---\n\nGenerated section\n\nSource commit: https://github.com/org/source/commit/abc123')
+  assert_eq "$expected" "$(cat "$OUT")" "body"
+}
+
+test_build_generated_without_previous_body() {
+  echo '[]' > "$CASE_DIR/closed.json"
+  run_build true
+  assert_eq 0 "$STATUS" "exit status"
+  assert_eq "$(cat "$CASE_DIR/section")" "$(cat "$OUT")" "section alone"
+  assert_file_lacks "$OUT" "---" "no separator"
+}
+
+test_build_failed_with_previous_body() {
+  pr_json 3 2024-03-01T00:00:00Z "Old body" | jq -s . > "$CASE_DIR/closed.json"
+  printf 'Source commit: https://github.com/org/source/commit/abc123\n' > "$CASE_DIR/section"
+  sh "$BUILD" "$CASE_DIR/closed.json" "$CASE_DIR/section" false "my-branch" > "$OUT" 2> "$ERR"
+  expected=$(printf 'Old body\n\n---\n\nSource commit: https://github.com/org/source/commit/abc123')
+  assert_eq "$expected" "$(cat "$OUT")" "body"
+}
+
+test_build_failed_without_previous_body_uses_default() {
+  echo '[]' > "$CASE_DIR/closed.json"
+  run_build false
+  assert_eq 0 "$STATUS" "exit status"
+  assert_eq "6d792d6272616e6368" "$(od -An -tx1 "$OUT" | tr -d ' \n')" "branch name, no newline"
+}
+
+test_build_over_cap_previous_body() {
+  big=$(head -c 60000 /dev/zero | tr '\0' 'x')
+  pr_json 7 2024-03-01T00:00:00Z "$big" | jq -s . > "$CASE_DIR/closed.json"
+  run_build true
+  assert_eq 0 "$STATUS" "exit status"
+  expected=$(printf 'Earlier updates: #7\n\nGenerated section\n\nSource commit: https://github.com/org/source/commit/abc123')
+  assert_eq "$expected" "$(cat "$OUT")" "body"
+}
+
 run_test() {
   CURRENT="$1"
   TEST_OK=1
@@ -322,7 +369,12 @@ for t in \
   test_previous_body_treats_default_body_with_trailing_newline_as_default \
   test_previous_body_over_cap_starts_fresh \
   test_previous_body_without_section_only_reports_status \
-  test_previous_body_handles_non_array_and_non_string_body
+  test_previous_body_handles_non_array_and_non_string_body \
+  test_build_generated_with_previous_body \
+  test_build_generated_without_previous_body \
+  test_build_failed_with_previous_body \
+  test_build_failed_without_previous_body_uses_default \
+  test_build_over_cap_previous_body
 do
   run_test "$t"
 done

@@ -49,19 +49,16 @@ mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
 cd $INPUT_SOURCE_FOLDER
 cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
 SYNCED_FILES_LIST=""
-SOURCE_ROOT=""
+SOURCE_PREFIX=""
 if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
 then
   SYNCED_FILES_LIST="$CLONE_DIR.synced_files"
   # describe_pr.sh needs paths relative to the source repo root, not INPUT_SOURCE_FOLDER.
   # Asking git finds the repo wherever it was checked out, not only at GITHUB_WORKSPACE.
   # safe.directory is needed because the workspace is owned by another user.
-  if SOURCE_ROOT=$(git -c safe.directory='*' rev-parse --show-toplevel 2>/dev/null)
+  if ! SOURCE_PREFIX=$(git -c safe.directory='*' rev-parse --show-prefix 2>/dev/null)
   then
-    SOURCE_PREFIX=$(git -c safe.directory='*' rev-parse --show-prefix)
-  else
     echo "Warning: source_folder is not inside a git repository, describing the pull request without source commits"
-    SOURCE_ROOT=""
     SOURCE_PREFIX=""
   fi
   # Left unquoted so find sees the same word-splitting and globbing as the cp above.
@@ -89,7 +86,7 @@ then
   then
     echo "Generating pull request description"
     set +x
-    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$SOURCE_ROOT" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST" "$CLOSED_PRS_FILE")
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST" "$CLOSED_PRS_FILE")
     then
       PR_GENERATED=true
     else
@@ -97,27 +94,21 @@ then
     fi
     set -x
   fi
-  PR_BODY_FILE="$CLONE_DIR.pr_body"
+  SECTION_FILE="$CLONE_DIR.section"
+  SOURCE_LINE="Source commit: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
   if [ "$PR_GENERATED" = true ]
   then
     PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH: $(printf '%s\n' "$GENERATED" | head -n 1)"
     {
       printf '%s\n' "$GENERATED" | tail -n +2
-      printf '\nSource commit: https://github.com/%s/commit/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-    } > "$PR_BODY_FILE"
+      printf '\n%s\n' "$SOURCE_LINE"
+    } > "$SECTION_FILE"
   else
     PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH"
-    SOURCE_LINE_FILE="$CLONE_DIR.source_line"
-    printf 'Source commit: https://github.com/%s/commit/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > "$SOURCE_LINE_FILE"
-    if /previous_pr_body.sh "$CLOSED_PRS_FILE" "$SOURCE_LINE_FILE" > "$PR_BODY_FILE"
-    then
-      :
-    else
-      # The default body is the branch name alone;
-      # later runs recognize it by that and don't carry it forward.
-      printf '%s' "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
-    fi
+    printf '%s\n' "$SOURCE_LINE" > "$SECTION_FILE"
   fi
+  PR_BODY_FILE="$CLONE_DIR.pr_body"
+  /build_pr_body.sh "$CLOSED_PRS_FILE" "$SECTION_FILE" "$PR_GENERATED" "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
   gh pr create --title "$PR_TITLE" \
                --body-file "$PR_BODY_FILE" \
                --base $INPUT_DESTINATION_BASE_BRANCH \

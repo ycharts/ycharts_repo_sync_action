@@ -12,5 +12,6 @@ ADD entrypoint.sh /entrypoint.sh
 ADD describe_pr.sh /describe_pr.sh
 ADD close_prs.sh /close_prs.sh
 ADD previous_pr_body.sh /previous_pr_body.sh
-RUN chmod +x /entrypoint.sh /describe_pr.sh /close_prs.sh /previous_pr_body.sh
+ADD build_pr_body.sh /build_pr_body.sh
+RUN chmod +x /entrypoint.sh /describe_pr.sh /close_prs.sh /previous_pr_body.sh /build_pr_body.sh
 ENTRYPOINT [ "/entrypoint.sh" ]

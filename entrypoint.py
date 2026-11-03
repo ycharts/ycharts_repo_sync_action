@@ -20,6 +20,8 @@ def main(
     clock: Callable[[], datetime] | None = None,
 ) -> int:
     env = os.environ if env is None else env
+    # Commands inherit os.environ, so the token goes there and never in args:
+    # CommandError messages include the args and are printed in ::error:: lines.
     if env.get("API_TOKEN_GITHUB"):
         os.environ["GITHUB_TOKEN"] = env["API_TOKEN_GITHUB"]
     try:

@@ -81,10 +81,10 @@ class RepoSyncTest(FlowTestCase):
                 with self.assertRaises(CommandError):
                     self.sync(runner)
 
-    def test_copy_error_becomes_sync_error(self):
+    def test_copy_files_raises_sync_error_when_pattern_matches_nothing(self):
         settings = Settings.from_env(self.env(INPUT_SOURCE_FILES="nothing.txt"))
         with self.assertRaises(SyncError) as ctx:
-            RepoSync(settings, FakeRunner(), FakeRunner()).copy_files(self.root)
+            RepoSync(settings, GitClient(FakeRunner()), GitHubClient(FakeRunner())).copy_files(self.root)
         self.assertIn("matched nothing", str(ctx.exception))
 
     def test_default_clients(self):
@@ -129,7 +129,7 @@ class CopyFilesTest(unittest.TestCase):
         settings = Settings.from_env(
             base_env(INPUT_SOURCE_FOLDER=self.src, INPUT_SOURCE_FILES=files, INPUT_DESTINATION_FOLDER=dest)
         )
-        RepoSync(settings).copy_files(self.clone)
+        RepoSync(settings, GitClient(FakeRunner()), GitHubClient(FakeRunner())).copy_files(self.clone)
 
     def test_single_file(self):
         self.write(os.path.join(self.src, "a.txt"), "hello")

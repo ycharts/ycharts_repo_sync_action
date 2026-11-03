@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import entrypoint
 from tests.helpers import FakeRunner, FlowTestCase, base_env
@@ -76,6 +77,16 @@ class EntrypointTest(FlowTestCase):
         self.assertIn("::error::failed to copy", out)
         self.assertIn("blocker", out)
         self.assertNotIn(["git", "checkout", "-b", "sync-branch"], runner.commands)
+
+    def test_no_runner_builds_repo_sync_from_settings_only(self):
+        with mock.patch("entrypoint.RepoSync") as repo_sync:
+            code = entrypoint.main(env=self.env())
+        self.assertEqual(code, 0)
+        repo_sync.assert_called_once()
+        args, kwargs = repo_sync.call_args
+        self.assertEqual(len(args), 1)
+        self.assertEqual(kwargs, {})
+        repo_sync.return_value.run.assert_called_once_with()
 
 
 if __name__ == "__main__":

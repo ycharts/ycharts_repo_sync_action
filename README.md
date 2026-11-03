@@ -30,7 +30,7 @@ This GitHub Action copies a folder from the current repository to a location in 
             pull_request_reviewers: 'reviewers'
             pull_request_labels: 'label1,label2'
             generate_pr_description: true
-            pr_description_exclude: 'dist/**,**/*.snap'
+            pr_description_exclude: 'dist/*,*.snap'
 
 ## Variables
 * source_files: The files or folders inside `source_folder` to copy, separated by spaces. They are passed to `cp --parents`, so their relative paths are kept in the destination.
@@ -45,7 +45,7 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning. When set, these labels also decide which existing pull requests the action closes (see Behavior Notes).
 * generate_pr_description: [optional] Set to `true` to generate the pull request title and description with the Claude API. Default is `false`. See Pull request description below.
 * anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
-* pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat and as a header line without a patch.
+* pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Each glob is matched against the whole file path using shell `case` rules, so `*` also matches across `/`: `*.snap` matches `.snap` files at any depth and `dist/*` covers everything under `dist`. Avoid `**/*.snap`, which does not match a root-level `a.snap`. Excluded files still appear in the diff stat and as a header line without a patch.
 
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:

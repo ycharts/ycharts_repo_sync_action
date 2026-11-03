@@ -189,6 +189,22 @@ def _is_within(path, root):
     return os.path.commonpath([path, root]) == root
 
 
+def _copy_file(source, target):
+    if os.path.lexists(target) and (os.path.islink(target) or os.path.islink(source)):
+        os.unlink(target)
+    shutil.copy2(source, target, follow_symlinks=False)
+
+
+def _clear_symlink_targets(source_dir, target_dir):
+    for dirpath, dirnames, filenames in os.walk(source_dir):
+        relative = os.path.relpath(dirpath, source_dir)
+        for name in dirnames + filenames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                existing = os.path.normpath(os.path.join(target_dir, relative, name))
+                if os.path.lexists(existing):
+                    os.unlink(existing)
+
+
 class RepoSync:
     def __init__(self, settings, git, github):
         self.settings = settings
@@ -198,26 +214,39 @@ class RepoSync:
     def copy_files(self, clone_dir):
         source_root = os.path.realpath(self.settings.source_folder)
         clone_root = os.path.realpath(clone_dir)
-        destination_root = os.path.realpath(os.path.join(clone_root, self.settings.destination_folder))
+        relative_destination = self.settings.destination_folder.lstrip("/" + (os.altsep or ""))
+        destination_root = os.path.realpath(os.path.join(clone_root, relative_destination))
         if not _is_within(destination_root, clone_root):
             raise SyncError("destination_folder must stay inside the destination repository")
-        os.makedirs(destination_root, exist_ok=True)
 
-        for pattern in self.settings.source_files:
-            matches = glob.glob(pattern, root_dir=source_root, recursive=True)
-            if not matches:
-                raise SyncError(f"source file pattern '{pattern}' matched nothing in {self.settings.source_folder}")
-            for match in matches:
-                source = os.path.realpath(os.path.join(source_root, match))
-                if not _is_within(source, source_root):
-                    raise SyncError(f"'{match}' resolves outside the source folder")
-                relative = os.path.normpath(match)
-                target = os.path.join(destination_root, relative)
-                if os.path.isdir(source):
-                    shutil.copytree(source, target, dirs_exist_ok=True)
-                else:
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    shutil.copy2(source, target)
+        current = destination_root
+        try:
+            os.makedirs(destination_root, exist_ok=True)
+            for pattern in self.settings.source_files:
+                matches = glob.glob(pattern, root_dir=source_root, recursive=True)
+                if not matches:
+                    raise SyncError(f"source file pattern '{pattern}' matched nothing in {self.settings.source_folder}")
+                for match in matches:
+                    lexical = os.path.join(source_root, match)
+                    current = lexical
+                    if not _is_within(os.path.realpath(lexical), source_root):
+                        raise SyncError(f"'{match}' resolves outside the source folder")
+                    target = os.path.join(destination_root, os.path.normpath(match))
+                    current = target
+                    if os.path.isdir(lexical) and not os.path.islink(lexical):
+                        _clear_symlink_targets(lexical, target)
+                        shutil.copytree(
+                            lexical,
+                            target,
+                            symlinks=True,
+                            copy_function=_copy_file,
+                            dirs_exist_ok=True,
+                        )
+                    else:
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        _copy_file(lexical, target)
+        except OSError as exc:
+            raise SyncError(f"failed to copy '{current}': {exc}") from exc
 
     def run(self, clone_dir=None):
         if clone_dir is not None:

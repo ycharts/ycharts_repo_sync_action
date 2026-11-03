@@ -142,6 +142,17 @@ class EntrypointTest(FlowTestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("::error::", out)
 
+    def test_missing_source_folder_failure(self):
+        code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=os.path.join(self.root, "nope")))
+        self.assertEqual(code, 1)
+        self.assertIn("::error::", out)
+
+    def test_source_folder_is_file_failure(self):
+        with tempfile.NamedTemporaryFile() as f:
+            code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=f.name))
+        self.assertEqual(code, 1)
+        self.assertIn("::error::", out)
+
 
 if __name__ == "__main__":
     unittest.main()

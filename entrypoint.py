@@ -2,7 +2,11 @@
 import os
 import sys
 
-from sync import CommandError, CommandRunner, ConfigError, GitClient, GitHubClient, RepoSync, Settings, SyncError
+from repo_sync.commands import CommandError, CommandRunner
+from repo_sync.git import GitClient
+from repo_sync.github import GitHubClient
+from repo_sync.settings import ConfigError, Settings
+from repo_sync.sync import RepoSync, SyncError
 
 
 def escape(message):

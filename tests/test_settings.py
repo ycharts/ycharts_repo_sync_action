@@ -1,7 +1,7 @@
 import datetime
 import unittest
 
-from sync import ConfigError, Settings
+from repo_sync.settings import ConfigError, Settings
 from tests.helpers import base_env
 
 

@@ -1,4 +1,14 @@
-from sync import CommandError
+import contextlib
+import io
+import os
+import tempfile
+import unittest
+
+from repo_sync.commands import CommandError
+from repo_sync.git import GitClient
+from repo_sync.github import GitHubClient
+from repo_sync.settings import Settings
+from repo_sync.sync import RepoSync
 
 
 class FakeRunner:
@@ -39,3 +49,25 @@ def base_env(**overrides):
     }
     env.update(overrides)
     return env
+
+
+class FlowTestCase(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.src = os.path.join(self.root, "src")
+        os.makedirs(self.src)
+        with open(os.path.join(self.src, "a.txt"), "w") as f:
+            f.write("a")
+
+    def env(self, **overrides):
+        return base_env(INPUT_SOURCE_FOLDER=self.src, **overrides)
+
+    def sync(self, runner, **overrides):
+        settings = Settings.from_env(self.env(**overrides))
+        clone = os.path.join(self.root, "clone")
+        os.makedirs(clone, exist_ok=True)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            RepoSync(settings, GitClient(runner), GitHubClient(runner)).run(clone_dir=clone)
+        return clone, out.getvalue()

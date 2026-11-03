@@ -54,3 +54,13 @@ The action will create any destination paths if they don't exist. It will also o
 The action is written in Python using only the standard library. Run the tests from the repository root:
 
     python3 -m unittest discover -s tests
+
+`entrypoint.py` is the launcher the Docker image runs. The logic lives in the `repo_sync/` package:
+
+- `commands.py`: `CommandRunner` and `CommandError`
+- `git.py` and `github.py`: the `git` and `gh` clients
+- `settings.py`: `Settings` and `ConfigError`
+- `files.py`: copying source files into the clone
+- `sync.py`: `RepoSync` and `SyncError`
+
+The tests in `tests/` mirror these modules.

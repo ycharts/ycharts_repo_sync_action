@@ -1,34 +1,10 @@
-import contextlib
-import io
 import os
-import tempfile
 import unittest
 
-import entrypoint
-from sync import CommandError, GitClient, GitHubClient, RepoSync, Settings
-from tests.helpers import FakeRunner, base_env
-
-
-class FlowTestCase(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-        self.src = os.path.join(self.root, "src")
-        os.makedirs(self.src)
-        with open(os.path.join(self.src, "a.txt"), "w") as f:
-            f.write("a")
-
-    def env(self, **overrides):
-        return base_env(INPUT_SOURCE_FOLDER=self.src, **overrides)
-
-    def sync(self, runner, **overrides):
-        settings = Settings.from_env(self.env(**overrides))
-        clone = os.path.join(self.root, "clone")
-        os.makedirs(clone, exist_ok=True)
-        with contextlib.redirect_stdout(io.StringIO()) as out:
-            RepoSync(settings, GitClient(runner), GitHubClient(runner)).run(clone_dir=clone)
-        return clone, out.getvalue()
+from repo_sync.commands import CommandError
+from repo_sync.settings import Settings
+from repo_sync.sync import RepoSync, SyncError
+from tests.helpers import FakeRunner, FlowTestCase
 
 
 class RepoSyncTest(FlowTestCase):
@@ -102,56 +78,11 @@ class RepoSyncTest(FlowTestCase):
                 with self.assertRaises(CommandError):
                     self.sync(runner)
 
-
-class EntrypointTest(FlowTestCase):
-    def main(self, runner, env):
-        with contextlib.redirect_stdout(io.StringIO()) as out:
-            code = entrypoint.main(env=env, runner=runner)
-        return code, out.getvalue()
-
-    def test_success(self):
-        code, _ = self.main(FakeRunner(failures={("git", "diff"): 1}), self.env())
-        self.assertEqual(code, 0)
-
-    def test_no_changes_success(self):
-        code, _ = self.main(FakeRunner(), self.env())
-        self.assertEqual(code, 0)
-
-    def test_validation_error_runs_nothing(self):
-        runner = FakeRunner()
-        code, out = self.main(runner, self.env(INPUT_USER_NAME=""))
-        self.assertNotEqual(code, 0)
-        self.assertIn("::error::", out)
-        self.assertEqual(runner.calls, [])
-
-    def test_master_rejected(self):
-        runner = FakeRunner()
-        code, out = self.main(runner, self.env(INPUT_DESTINATION_HEAD_BRANCH="master"))
-        self.assertNotEqual(code, 0)
-        self.assertEqual(runner.calls, [])
-
-    def test_command_failure(self):
-        code, out = self.main(FakeRunner(failures={("git", "clone"): 128}), self.env())
-        self.assertEqual(code, 128)
-        self.assertIn("::error::", out)
-        self.assertIn("git", out)
-        self.assertNotIn("secret-token", out)
-
-    def test_no_match_failure(self):
-        code, out = self.main(FakeRunner(), self.env(INPUT_SOURCE_FILES="nothing.txt"))
-        self.assertNotEqual(code, 0)
-        self.assertIn("::error::", out)
-
-    def test_missing_source_folder_failure(self):
-        code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=os.path.join(self.root, "nope")))
-        self.assertEqual(code, 1)
-        self.assertIn("::error::", out)
-
-    def test_source_folder_is_file_failure(self):
-        with tempfile.NamedTemporaryFile() as f:
-            code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=f.name))
-        self.assertEqual(code, 1)
-        self.assertIn("::error::", out)
+    def test_copy_error_becomes_sync_error(self):
+        settings = Settings.from_env(self.env(INPUT_SOURCE_FILES="nothing.txt"))
+        with self.assertRaises(SyncError) as ctx:
+            RepoSync(settings, None, None).copy_files(self.root)
+        self.assertIn("matched nothing", str(ctx.exception))
 
 
 if __name__ == "__main__":

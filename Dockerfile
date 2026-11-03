@@ -13,5 +13,6 @@ RUN wget -q  https://api.github.com/repos/cli/cli/releases/latest \
 
 WORKDIR /
 
-COPY sync.py entrypoint.py /action/
+COPY entrypoint.py /action/
+COPY repo_sync/ /action/repo_sync/
 ENTRYPOINT [ "python3", "/action/entrypoint.py" ]

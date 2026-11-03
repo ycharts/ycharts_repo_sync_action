@@ -2,8 +2,9 @@ import os
 import tempfile
 import unittest
 
-from sync import RepoSync, Settings, SyncError
-from tests.helpers import FakeRunner, base_env
+from repo_sync.files import CopyError, copy_files
+from repo_sync.settings import Settings
+from tests.helpers import base_env
 
 
 class CopyTest(unittest.TestCase):
@@ -29,7 +30,7 @@ class CopyTest(unittest.TestCase):
         settings = Settings.from_env(
             base_env(INPUT_SOURCE_FOLDER=self.src, INPUT_SOURCE_FILES=files, INPUT_DESTINATION_FOLDER=dest)
         )
-        RepoSync(settings, None, None).copy_files(self.clone)
+        copy_files(settings.source_folder, settings.source_files, settings.destination_folder, self.clone)
 
     def test_single_file(self):
         self.write(os.path.join(self.src, "a.txt"), "hello")
@@ -82,29 +83,29 @@ class CopyTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.clone, "a.txt")))
 
     def test_no_match_errors(self):
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("missing.txt")
 
     def test_second_pattern_no_match_errors(self):
         self.write(os.path.join(self.src, "a.txt"))
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("a.txt nope*")
 
     def test_escape_via_dotdot_rejected(self):
         self.write(os.path.join(self.root, "secret.txt"))
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("../secret.txt")
         self.assertFalse(os.path.exists(os.path.join(self.clone, "secret.txt")))
 
     def test_escape_via_symlink_rejected(self):
         self.write(os.path.join(self.root, "secret.txt"))
         os.symlink(os.path.join(self.root, "secret.txt"), os.path.join(self.src, "link.txt"))
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("link.txt")
 
     def test_destination_escape_rejected(self):
         self.write(os.path.join(self.src, "a.txt"))
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("a.txt", dest="../outside")
 
     def test_leading_slash_destination(self):
@@ -119,9 +120,9 @@ class CopyTest(unittest.TestCase):
 
     def test_dotdot_destination_with_slash_rejected(self):
         self.write(os.path.join(self.src, "a.txt"))
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("a.txt", dest="/../x")
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("a.txt", dest="../x")
 
     def test_symlink_in_directory_to_outside_copied_as_link(self):
@@ -182,26 +183,28 @@ class CopyTest(unittest.TestCase):
 
     def test_missing_source_folder_errors(self):
         self.src = os.path.join(self.root, "nope")
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError) as ctx:
             self.copy("a.txt")
+        self.assertIn(f"source_folder '{self.src}' is not a directory", str(ctx.exception))
 
     def test_source_folder_is_file_errors(self):
         self.src = os.path.join(self.root, "file.txt")
         self.write(self.src)
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError) as ctx:
             self.copy("a.txt")
+        self.assertIn(f"source_folder '{self.src}' is not a directory", str(ctx.exception))
 
     def test_os_error_wrapped_with_path(self):
         self.write(os.path.join(self.src, "a.txt"))
         self.write(os.path.join(self.clone, "blocker"), "file")
-        with self.assertRaises(SyncError) as ctx:
+        with self.assertRaises(CopyError) as ctx:
             self.copy("a.txt", dest="blocker/sub")
         self.assertIn("blocker", str(ctx.exception))
 
     def test_copy_failure_in_directory_wrapped(self):
         self.write(os.path.join(self.src, "d", "a.txt"))
         self.write(os.path.join(self.clone, "d"), "file")
-        with self.assertRaises(SyncError):
+        with self.assertRaises(CopyError):
             self.copy("d")
 
 

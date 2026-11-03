@@ -689,6 +689,7 @@ run_test() {
   fi
 }
 
+# Runs every `test_name() {` defined in this file; keep definitions in that one-line form.
 for t in $(sed -n 's/^\(test_[A-Za-z0-9_]*\)() {$/\1/p' "$0")
 do
   run_test "$t"

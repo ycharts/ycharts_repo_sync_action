@@ -20,5 +20,6 @@ if [ "$GENERATED" = true ]
 then
   cat "$SECTION_FILE"
 else
+  # previous_pr_body.sh skips a body equal to the branch name, so later runs ignore this one.
   printf '%s' "$BRANCH"
 fi

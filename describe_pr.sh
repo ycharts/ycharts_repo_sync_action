@@ -96,6 +96,8 @@ then
 else
   ENDPOINT="repos/$SOURCE_REPO/commits/$SOURCE_SHA"
 fi
+# Compare lists commits oldest first and returns at most 250 commits and 300 files;
+# larger pushes are described from that partial result, not paginated.
 gh api "$ENDPOINT" > "$WORK_DIR/source.json" 2> "$WORK_DIR/gh.err" \
   || fail "gh api $ENDPOINT failed: $(head -c 300 "$WORK_DIR/gh.err")"
 

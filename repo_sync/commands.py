@@ -11,6 +11,15 @@ class CommandError(Exception):
 
 
 class CommandRunner:
+    """Runs every git and gh command, so tests can swap in a fake and run nothing.
+
+    The child env gets GITHUB_TOKEN from the token argument,
+    or else from API_TOKEN_GITHUB in base_env.
+    A non-zero exit raises CommandError, as does a missing binary (exit code 127).
+    Output is flushed before each command so the action's log lines
+    stay in order with the command's output.
+    """
+
     def __init__(self, token=None, base_env=None):
         self.env = dict(os.environ if base_env is None else base_env)
         token = token or self.env.get("API_TOKEN_GITHUB")

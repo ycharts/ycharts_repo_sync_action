@@ -17,6 +17,7 @@ def main(env=None, runner=None, clock=None):
     try:
         settings = Settings.from_env(env, now=clock)
         if runner is None:
+            # The default CommandRunner reads API_TOKEN_GITHUB from os.environ, not env.
             sync = RepoSync(settings)
         else:
             sync = RepoSync(settings, GitClient(runner), GitHubClient(runner))

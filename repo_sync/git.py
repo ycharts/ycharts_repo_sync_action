@@ -76,4 +76,5 @@ class GitHubClient:
         self.runner(args, cwd=cwd)
 
     def add_label(self, cwd: str, pr: str, label: str) -> None:
+        # gh pr edit takes a PR number or its head branch; the caller passes the branch.
         self.runner(["gh", "pr", "edit", pr, "--add-label", label], cwd=cwd)

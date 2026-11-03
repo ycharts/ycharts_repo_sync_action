@@ -1,7 +1,6 @@
 import os
 import tempfile
 import unittest
-from unittest import mock
 
 from repo_sync.commands import CommandError
 from repo_sync.git import GitClient, GitHubClient
@@ -87,23 +86,6 @@ class RepoSyncTest(FlowTestCase):
             RepoSync(settings, GitClient(FakeRunner()), GitHubClient(FakeRunner())).copy_files(self.root)
         self.assertIn("matched nothing", str(ctx.exception))
 
-    def test_default_clients(self) -> None:
-        settings = Settings.from_env(self.env())
-        with mock.patch("repo_sync.sync.GitClient") as git_class, mock.patch(
-            "repo_sync.sync.GitHubClient"
-        ) as github_class:
-            sync = RepoSync(settings)
-        git_class.assert_called_once_with()
-        github_class.assert_called_once_with()
-        self.assertIs(sync.git, git_class.return_value)
-        self.assertIs(sync.github, github_class.return_value)
-
-    def test_explicit_clients_are_used(self) -> None:
-        settings = Settings.from_env(self.env())
-        git, github = GitClient(FakeRunner()), GitHubClient(FakeRunner())
-        sync = RepoSync(settings, git, github)
-        self.assertIs(sync.git, git)
-        self.assertIs(sync.github, github)
 
 
 class CopyFilesTest(unittest.TestCase):

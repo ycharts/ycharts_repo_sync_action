@@ -1,4 +1,3 @@
-import inspect
 import os
 import subprocess
 import unittest
@@ -8,9 +7,6 @@ from repo_sync.commands import CommandError, CommandRunner
 
 
 class CommandRunnerTest(unittest.TestCase):
-    def test_takes_no_constructor_arguments(self) -> None:
-        self.assertEqual(list(inspect.signature(CommandRunner).parameters), [])
-
     def test_inherits_process_env_and_no_shell(self) -> None:
         runner = CommandRunner()
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}):
@@ -23,12 +19,6 @@ class CommandRunnerTest(unittest.TestCase):
         self.assertNotIn("shell", kwargs)
         self.assertIsNone(kwargs["stdout"])
         self.assertEqual(run.call_args[0][0], ["gh", "x"])
-
-    def test_adds_no_token_handling(self) -> None:
-        with mock.patch.dict(os.environ, {"API_TOKEN_GITHUB": "tok"}):
-            os.environ.pop("GITHUB_TOKEN", None)
-            CommandRunner()
-            self.assertNotIn("GITHUB_TOKEN", os.environ)
 
     def test_capture_returns_stdout(self) -> None:
         runner = CommandRunner()

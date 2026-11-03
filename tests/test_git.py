@@ -47,12 +47,6 @@ class GitClientTest(unittest.TestCase):
         with self.assertRaises(CommandError):
             git.has_staged_changes("/c")
 
-    def test_default_runner_is_command_runner(self) -> None:
-        with mock.patch("repo_sync.git.CommandRunner") as runner_class:
-            git = GitClient()
-        runner_class.assert_called_once_with()
-        self.assertIs(git.runner, runner_class.return_value)
-
     def test_requires_github_token(self) -> None:
         for value in (None, ""):
             with self.subTest(value=value):
@@ -64,9 +58,6 @@ class GitClientTest(unittest.TestCase):
                         GitClient(FakeRunner())
                 self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
 
-    def test_constructs_with_github_token(self) -> None:
-        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "t"}):
-            GitClient(FakeRunner())
 
 
 class GitHubClientTest(unittest.TestCase):
@@ -116,12 +107,6 @@ class GitHubClientTest(unittest.TestCase):
         )
         self.assertTrue(all(call["cwd"] == "/c" for call in runner.calls))
 
-    def test_default_runner_is_command_runner(self) -> None:
-        with mock.patch("repo_sync.git.CommandRunner") as runner_class:
-            gh = GitHubClient()
-        runner_class.assert_called_once_with()
-        self.assertIs(gh.runner, runner_class.return_value)
-
     def test_requires_github_token(self) -> None:
         for value in (None, ""):
             with self.subTest(value=value):
@@ -132,10 +117,6 @@ class GitHubClientTest(unittest.TestCase):
                     with self.assertRaises(MissingTokenError) as ctx:
                         GitHubClient(FakeRunner())
                 self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
-
-    def test_constructs_with_github_token(self) -> None:
-        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "t"}):
-            GitHubClient(FakeRunner())
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import Self
 
 class ConfigError(Exception):
     def __init__(self, messages: Iterable[str]) -> None:
-        self.messages: list[str] = list(messages)
+        self.messages = list(messages)
         super().__init__("; ".join(self.messages))
 
 
@@ -33,7 +33,7 @@ class Settings:
         def get(name: str) -> str:
             return env.get(name, "").strip()
 
-        required: dict[str, str] = {
+        required = {
             "INPUT_SOURCE_FOLDER": "source_folder",
             "INPUT_SOURCE_FILES": "source_files",
             "INPUT_DESTINATION_REPO": "destination_repo",

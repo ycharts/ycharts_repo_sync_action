@@ -16,7 +16,7 @@ def require_token() -> None:
 class GitClient:
     def __init__(self, runner: Runner | None = None) -> None:
         require_token()
-        self.runner: Runner = runner or CommandRunner()
+        self.runner = runner or CommandRunner()
 
     def configure_user(self, email: str, name: str) -> None:
         self.runner(["git", "config", "--global", "user.email", email])
@@ -50,7 +50,7 @@ class GitClient:
 class GitHubClient:
     def __init__(self, runner: Runner | None = None) -> None:
         require_token()
-        self.runner: Runner = runner or CommandRunner()
+        self.runner = runner or CommandRunner()
 
     def setup_git_auth(self) -> None:
         # Not a token in the clone URL: libcurl 8.23 sends URL credentials

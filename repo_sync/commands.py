@@ -6,8 +6,8 @@ from typing import Protocol
 
 class CommandError(Exception):
     def __init__(self, command: Sequence[str], returncode: int) -> None:
-        self.command: list[str] = list(command)
-        self.returncode: int = returncode
+        self.command = list(command)
+        self.returncode = returncode
         super().__init__(f"command {' '.join(self.command)!r} failed with exit code {returncode}")
 
 

@@ -2,14 +2,11 @@ import glob
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 from repo_sync.commands import CommandError
 from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
-
-
-def _is_within(path: str, root: str) -> bool:
-    return os.path.commonpath([path, root]) == root
 
 
 class SyncError(Exception):
@@ -23,39 +20,39 @@ class RepoSync:
         git: GitClient | None = None,
         github: GitHubClient | None = None,
     ) -> None:
-        self.settings: Settings = settings
-        self.git: GitClient = git or GitClient()
-        self.github: GitHubClient = github or GitHubClient()
+        self.settings = settings
+        self.git = git or GitClient()
+        self.github = github or GitHubClient()
 
-    def copy_files(self, clone_dir: str) -> None:
+    def copy_files(self, clone_dir: str | Path) -> None:
         s = self.settings
         source_folder, source_files, destination_folder = s.source_folder, s.source_files, s.destination_folder
-        source_root = os.path.realpath(source_folder)
-        clone_root = os.path.realpath(clone_dir)
+        source_root = Path(source_folder).resolve()
+        clone_root = Path(clone_dir).resolve()
         relative_destination = destination_folder.lstrip("/" + (os.altsep or ""))
-        destination_root = os.path.realpath(os.path.join(clone_root, relative_destination))
-        if not _is_within(destination_root, clone_root):
+        destination_root = (clone_root / relative_destination).resolve()
+        if not destination_root.is_relative_to(clone_root):
             raise SyncError("destination_folder must stay inside the destination repository")
-        if not os.path.isdir(source_root):
+        if not source_root.is_dir():
             raise SyncError(f"source_folder '{source_folder}' is not a directory")
 
         current = destination_root
         try:
-            os.makedirs(destination_root, exist_ok=True)
+            destination_root.mkdir(parents=True, exist_ok=True)
             for pattern in source_files:
                 matches = glob.glob(pattern, root_dir=source_root, recursive=True)
                 if not matches:
                     raise SyncError(f"source file pattern '{pattern}' matched nothing in {source_folder}")
                 for match in matches:
                     # Copy the unresolved path so a symlink stays a link, never followed.
-                    # The realpath check only rejects links that point outside the source.
-                    lexical = os.path.join(source_root, match)
+                    # The resolve check only rejects links that point outside the source.
+                    lexical = source_root / match
                     current = lexical
-                    if not _is_within(os.path.realpath(lexical), source_root):
+                    if not lexical.resolve().is_relative_to(source_root):
                         raise SyncError(f"'{match}' resolves outside the source folder")
-                    target = os.path.join(destination_root, os.path.normpath(match))
+                    target = destination_root / os.path.normpath(match)
                     current = target
-                    if os.path.isdir(lexical) and not os.path.islink(lexical):
+                    if lexical.is_dir() and not lexical.is_symlink():
                         self._clear_symlink_targets(lexical, target)
                         shutil.copytree(
                             lexical,
@@ -65,30 +62,31 @@ class RepoSync:
                             dirs_exist_ok=True,
                         )
                     else:
-                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        target.parent.mkdir(parents=True, exist_ok=True)
                         self._copy_file(lexical, target)
         except OSError as exc:
             raise SyncError(f"failed to copy '{current}': {exc}") from exc
 
     @staticmethod
-    def _copy_file(source: str, target: str) -> None:
+    def _copy_file(source: str | Path, target: str | Path) -> None:
+        source, target = Path(source), Path(target)
         # Unlink a destination symlink first, so copy2 can't write through it
         # to a file outside the repo.
-        if os.path.lexists(target) and (os.path.islink(target) or os.path.islink(source)):
-            os.unlink(target)
+        if target.exists(follow_symlinks=False) and (target.is_symlink() or source.is_symlink()):
+            target.unlink()
         shutil.copy2(source, target, follow_symlinks=False)
 
     @staticmethod
-    def _clear_symlink_targets(source_dir: str, target_dir: str) -> None:
+    def _clear_symlink_targets(source_dir: Path, target_dir: Path) -> None:
         # copytree(symlinks=True) creates links with os.symlink,
         # which fails if the destination entry already exists.
-        for dirpath, dirnames, filenames in os.walk(source_dir):
-            relative = os.path.relpath(dirpath, source_dir)
+        for dirpath, dirnames, filenames in source_dir.walk():
+            relative = dirpath.relative_to(source_dir)
             for name in dirnames + filenames:
-                if os.path.islink(os.path.join(dirpath, name)):
-                    existing = os.path.normpath(os.path.join(target_dir, relative, name))
-                    if os.path.lexists(existing):
-                        os.unlink(existing)
+                if (dirpath / name).is_symlink():
+                    existing = target_dir / relative / name
+                    if existing.exists(follow_symlinks=False):
+                        existing.unlink()
 
     def run(self, clone_dir: str | None = None) -> None:
         if clone_dir is not None:

@@ -48,7 +48,7 @@ class FakeRunner:
 
 
 def base_env(**overrides: str) -> dict[str, str]:
-    env: dict[str, str] = {
+    env = {
         "INPUT_SOURCE_FOLDER": "src",
         "INPUT_SOURCE_FILES": "a.txt",
         "INPUT_DESTINATION_REPO": "org/repo",

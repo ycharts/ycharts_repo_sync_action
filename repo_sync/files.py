@@ -28,6 +28,8 @@ def _clear_symlink_targets(source_dir, target_dir):
 
 
 class CopyError(Exception):
+    # Not SyncError: sync.py imports this module, so importing SyncError here would be a cycle.
+    # RepoSync.copy_files converts this to SyncError.
     pass
 
 

@@ -61,6 +61,8 @@ class EntrypointTest(FlowTestCase):
         self.assertIn("is not a directory", out)
 
     def test_copy_os_error_failure(self):
+        # main() clones into its own temp dir, so the blocking file
+        # can only be created once the clone command names that dir.
         class BlockingRunner(FakeRunner):
             def __call__(self, args, cwd=None, capture=False):
                 if args[:2] == ["git", "clone"]:

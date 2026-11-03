@@ -63,7 +63,7 @@ def base_env(**overrides: str) -> dict[str, str]:
 
 
 class FlowTestCase(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)

@@ -1,6 +1,7 @@
 import dataclasses
 import datetime
 from collections.abc import Callable, Iterable, Mapping
+from typing import Self
 
 
 class ConfigError(Exception):
@@ -28,7 +29,7 @@ class Settings:
     @classmethod
     def from_env(
         cls, env: Mapping[str, str], now: Callable[[], datetime.datetime] | None = None
-    ) -> Settings:
+    ) -> Self:
         def get(name: str) -> str:
             return env.get(name, "").strip()
 

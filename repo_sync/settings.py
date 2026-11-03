@@ -1,17 +1,18 @@
 import dataclasses
 import datetime
+from collections.abc import Callable, Iterable, Mapping
 
 
 class ConfigError(Exception):
-    def __init__(self, messages):
-        self.messages = list(messages)
+    def __init__(self, messages: Iterable[str]) -> None:
+        self.messages: list[str] = list(messages)
         super().__init__("; ".join(self.messages))
 
 
 @dataclasses.dataclass
 class Settings:
     source_folder: str
-    source_files: list
+    source_files: list[str]
     destination_repo: str
     destination_folder: str
     user_email: str
@@ -20,16 +21,18 @@ class Settings:
     head_branch_prefix: str
     base_branch: str
     reviewers: str
-    labels: list
+    labels: list[str]
     github_repository: str
     github_sha: str
 
     @classmethod
-    def from_env(cls, env, now=None):
-        def get(name):
+    def from_env(
+        cls, env: Mapping[str, str], now: Callable[[], datetime.datetime] | None = None
+    ) -> Settings:
+        def get(name: str) -> str:
             return env.get(name, "").strip()
 
-        required = {
+        required: dict[str, str] = {
             "INPUT_SOURCE_FOLDER": "source_folder",
             "INPUT_SOURCE_FILES": "source_files",
             "INPUT_DESTINATION_REPO": "destination_repo",

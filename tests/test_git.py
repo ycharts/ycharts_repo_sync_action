@@ -7,11 +7,11 @@ from tests.helpers import FakeRunner
 
 
 class GitClientTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.runner = FakeRunner()
         self.git = GitClient(self.runner)
 
-    def test_commands(self):
+    def test_commands(self) -> None:
         self.git.configure_user("e@x.com", "name")
         self.git.clone("https://github.com/o/r.git", "/tmp/c")
         self.git.checkout_new_branch("/tmp/c", "br")
@@ -31,21 +31,21 @@ class GitClientTest(unittest.TestCase):
             ],
         )
 
-    def test_staged_changes_detected_on_exit_1(self):
+    def test_staged_changes_detected_on_exit_1(self) -> None:
         git = GitClient(FakeRunner(failures={("git", "diff"): 1}))
         self.assertTrue(git.has_staged_changes("/c"))
 
-    def test_no_staged_changes_on_exit_0(self):
+    def test_no_staged_changes_on_exit_0(self) -> None:
         self.assertFalse(self.git.has_staged_changes("/c"))
         self.assertEqual(self.runner.calls[0]["args"], ["git", "diff", "--cached", "--quiet"])
         self.assertEqual(self.runner.calls[0]["cwd"], "/c")
 
-    def test_diff_other_failure_propagates(self):
+    def test_diff_other_failure_propagates(self) -> None:
         git = GitClient(FakeRunner(failures={("git", "diff"): 128}))
         with self.assertRaises(CommandError):
             git.has_staged_changes("/c")
 
-    def test_default_runner_is_command_runner(self):
+    def test_default_runner_is_command_runner(self) -> None:
         with mock.patch("repo_sync.git.CommandRunner") as runner_class:
             git = GitClient()
         runner_class.assert_called_once_with()
@@ -53,12 +53,12 @@ class GitClientTest(unittest.TestCase):
 
 
 class GitHubClientTest(unittest.TestCase):
-    def test_setup(self):
+    def test_setup(self) -> None:
         runner = FakeRunner()
         GitHubClient(runner).setup_git_auth()
         self.assertEqual(runner.commands, [["gh", "auth", "setup-git"]])
 
-    def test_list_prs_command_and_parsing(self):
+    def test_list_prs_command_and_parsing(self) -> None:
         cases = {"": [], "7\n": [7], "3\n12\n5\n": [3, 12, 5]}
         for output, expected in cases.items():
             runner = FakeRunner(outputs={("gh", "pr", "list"): output})
@@ -78,7 +78,7 @@ class GitHubClientTest(unittest.TestCase):
                     },
                 )
 
-    def test_close_create_label(self):
+    def test_close_create_label(self) -> None:
         runner = FakeRunner()
         gh = GitHubClient(runner)
         gh.close_pr("/c", 4)
@@ -96,7 +96,7 @@ class GitHubClientTest(unittest.TestCase):
         )
         self.assertTrue(all(call["cwd"] == "/c" for call in runner.calls))
 
-    def test_default_runner_is_command_runner(self):
+    def test_default_runner_is_command_runner(self) -> None:
         with mock.patch("repo_sync.git.CommandRunner") as runner_class:
             gh = GitHubClient()
         runner_class.assert_called_once_with()

@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 import os
 import sys
+from collections.abc import Callable, Mapping
+from datetime import datetime
 
-from repo_sync.commands import CommandError
+from repo_sync.commands import CommandError, Runner
 from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import ConfigError, Settings
 from repo_sync.sync import RepoSync, SyncError
 
 
-def escape(message):
+def escape(message: str) -> str:
     return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def main(env=None, runner=None, clock=None):
+def main(
+    env: Mapping[str, str] | None = None,
+    runner: Runner | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> int:
     env = os.environ if env is None else env
     try:
         settings = Settings.from_env(env, now=clock)

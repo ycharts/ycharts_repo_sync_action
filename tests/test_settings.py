@@ -5,12 +5,12 @@ from repo_sync.settings import ConfigError, Settings
 from tests.helpers import base_env
 
 
-def fixed_clock():
+def fixed_clock() -> datetime.datetime:
     return datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
 
 
 class SettingsTest(unittest.TestCase):
-    def test_valid_defaults(self):
+    def test_valid_defaults(self) -> None:
         s = Settings.from_env(base_env())
         self.assertEqual(s.base_branch, "main")
         self.assertEqual(s.destination_folder, "")
@@ -19,7 +19,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s.reviewers, "")
         self.assertEqual(s.labels, [])
 
-    def test_each_required_input_missing(self):
+    def test_each_required_input_missing(self) -> None:
         for name in [
             "INPUT_SOURCE_FOLDER",
             "INPUT_SOURCE_FILES",
@@ -38,36 +38,36 @@ class SettingsTest(unittest.TestCase):
                     with self.assertRaises(ConfigError):
                         Settings.from_env(env)
 
-    def test_main_and_master_rejected(self):
+    def test_main_and_master_rejected(self) -> None:
         for branch in ("main", "master"):
             with self.subTest(branch=branch):
                 with self.assertRaises(ConfigError) as ctx:
                     Settings.from_env(base_env(INPUT_DESTINATION_HEAD_BRANCH=branch))
                 self.assertIn("main", ctx.exception.messages[0])
 
-    def test_base_branch_override(self):
+    def test_base_branch_override(self) -> None:
         s = Settings.from_env(base_env(INPUT_DESTINATION_BASE_BRANCH="develop"))
         self.assertEqual(s.base_branch, "develop")
 
-    def test_timestamp_on(self):
+    def test_timestamp_on(self) -> None:
         s = Settings.from_env(base_env(INPUT_TIMESTAMP_HEAD_BRANCH="true"), now=fixed_clock)
         self.assertEqual(s.head_branch, "sync-branch-20260102030405")
         self.assertEqual(s.head_branch_prefix, "sync-branch")
 
-    def test_timestamp_case_insensitive(self):
+    def test_timestamp_case_insensitive(self) -> None:
         s = Settings.from_env(base_env(INPUT_TIMESTAMP_HEAD_BRANCH="TRUE"), now=fixed_clock)
         self.assertEqual(s.head_branch, "sync-branch-20260102030405")
 
-    def test_timestamp_off(self):
+    def test_timestamp_off(self) -> None:
         for value in ("false", "", "no"):
             s = Settings.from_env(base_env(INPUT_TIMESTAMP_HEAD_BRANCH=value), now=fixed_clock)
             self.assertEqual(s.head_branch, "sync-branch")
 
-    def test_source_files_split_on_whitespace(self):
+    def test_source_files_split_on_whitespace(self) -> None:
         s = Settings.from_env(base_env(INPUT_SOURCE_FILES="a.txt  b/*.md\nc"))
         self.assertEqual(s.source_files, ["a.txt", "b/*.md", "c"])
 
-    def test_labels_trimmed(self):
+    def test_labels_trimmed(self) -> None:
         s = Settings.from_env(base_env(INPUT_PULL_REQUEST_LABELS=" a , ,b,, "))
         self.assertEqual(s.labels, ["a", "b"])
 

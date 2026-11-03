@@ -5,9 +5,10 @@ import tempfile
 
 from repo_sync.commands import CommandError
 from repo_sync.git import GitClient, GitHubClient
+from repo_sync.settings import Settings
 
 
-def _is_within(path, root):
+def _is_within(path: str, root: str) -> bool:
     return os.path.commonpath([path, root]) == root
 
 
@@ -16,12 +17,17 @@ class SyncError(Exception):
 
 
 class RepoSync:
-    def __init__(self, settings, git=None, github=None):
-        self.settings = settings
-        self.git = git or GitClient()
-        self.github = github or GitHubClient()
+    def __init__(
+        self,
+        settings: Settings,
+        git: GitClient | None = None,
+        github: GitHubClient | None = None,
+    ) -> None:
+        self.settings: Settings = settings
+        self.git: GitClient = git or GitClient()
+        self.github: GitHubClient = github or GitHubClient()
 
-    def copy_files(self, clone_dir):
+    def copy_files(self, clone_dir: str) -> None:
         s = self.settings
         source_folder, source_files, destination_folder = s.source_folder, s.source_files, s.destination_folder
         source_root = os.path.realpath(source_folder)
@@ -65,7 +71,7 @@ class RepoSync:
             raise SyncError(f"failed to copy '{current}': {exc}") from exc
 
     @staticmethod
-    def _copy_file(source, target):
+    def _copy_file(source: str, target: str) -> None:
         # Unlink a destination symlink first, so copy2 can't write through it
         # to a file outside the repo.
         if os.path.lexists(target) and (os.path.islink(target) or os.path.islink(source)):
@@ -73,7 +79,7 @@ class RepoSync:
         shutil.copy2(source, target, follow_symlinks=False)
 
     @staticmethod
-    def _clear_symlink_targets(source_dir, target_dir):
+    def _clear_symlink_targets(source_dir: str, target_dir: str) -> None:
         # copytree(symlinks=True) creates links with os.symlink,
         # which fails if the destination entry already exists.
         for dirpath, dirnames, filenames in os.walk(source_dir):
@@ -84,13 +90,13 @@ class RepoSync:
                     if os.path.lexists(existing):
                         os.unlink(existing)
 
-    def run(self, clone_dir=None):
+    def run(self, clone_dir: str | None = None) -> None:
         if clone_dir is not None:
             return self._run(clone_dir)
         with tempfile.TemporaryDirectory() as temp:
             return self._run(temp)
 
-    def _run(self, clone_dir):
+    def _run(self, clone_dir: str) -> None:
         s = self.settings
         print("Setting git variables", flush=True)
         self.git.configure_user(s.user_email, s.user_name)

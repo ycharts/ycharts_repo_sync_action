@@ -1,13 +1,19 @@
 import os
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
+from typing import Protocol
 
 
 class CommandError(Exception):
-    def __init__(self, command, returncode):
-        self.command = list(command)
-        self.returncode = returncode
+    def __init__(self, command: Sequence[str], returncode: int) -> None:
+        self.command: list[str] = list(command)
+        self.returncode: int = returncode
         super().__init__(f"command {' '.join(self.command)!r} failed with exit code {returncode}")
+
+
+class Runner(Protocol):
+    def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str: ...
 
 
 class CommandRunner:
@@ -20,15 +26,15 @@ class CommandRunner:
     stay in order with the command's output.
     """
 
-    def __init__(self, token=None, base_env=None):
-        self.env = dict(os.environ if base_env is None else base_env)
+    def __init__(self, token: str | None = None, base_env: Mapping[str, str] | None = None) -> None:
+        self.env: dict[str, str] = dict(os.environ if base_env is None else base_env)
         token = token or self.env.get("API_TOKEN_GITHUB")
         # Pass the token through the env, never args:
         # CommandError messages include the args and are printed in ::error:: lines.
         if token:
             self.env["GITHUB_TOKEN"] = token
 
-    def __call__(self, args, cwd=None, capture=False):
+    def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str:
         sys.stdout.flush()
         sys.stderr.flush()
         try:

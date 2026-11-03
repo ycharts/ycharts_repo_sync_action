@@ -40,6 +40,8 @@ class RepoSync:
         try:
             destination_root.mkdir(parents=True, exist_ok=True)
             for pattern in source_files:
+                # Not Path.glob: it matches dotfiles, symlinks,
+                # and trailing-slash patterns differently.
                 matches = glob.glob(pattern, root_dir=source_root, recursive=True)
                 if not matches:
                     raise SyncError(f"source file pattern '{pattern}' matched nothing in {source_folder}")

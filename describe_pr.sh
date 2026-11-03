@@ -18,7 +18,7 @@ set -u
 # With previous PRs, the title covers their changes plus the current one,
 # and the body is the newest previous body that is not blank or the default (the branch name),
 # a `---` line, then a section for the current changes.
-# If that would exceed MAX_BODY_BYTES, the previous body is replaced by an `Earlier updates: #N` line.
+# previous_pr_body.sh, next to this script, picks that body and assembles the result.
 
 MAX_DIFF_BYTES=200000
 CONTEXT_MAX_DIFF_BYTES=100000
@@ -26,7 +26,6 @@ MAX_SOURCE_COMMITS=50
 MAX_MESSAGES_BYTES=20000
 MAX_STAT_BYTES=20000
 MAX_PREVIOUS_PRS_BYTES=30000
-MAX_BODY_BYTES=60000
 CURRENT_MAX_DIFF_BYTES=100000
 DEEPEN_STEP=50
 DEEPEN_ATTEMPTS=4
@@ -55,8 +54,8 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 HAS_PREVIOUS=false
 PREVIOUS_TRUNCATED=false
 KEEP_PREVIOUS_BODY=false
+PREVIOUS_BODY_SCRIPT="$(dirname "$0")/previous_pr_body.sh"
 : > "$WORK_DIR/previous_prs.txt"
-: > "$WORK_DIR/previous_body.txt"
 if [ -n "$PREVIOUS_PRS" ] && [ -r "$PREVIOUS_PRS" ] \
   && jq -e 'type == "array" and length > 0 and all(.[]; type == "object")' "$PREVIOUS_PRS" >/dev/null 2>&1
 then
@@ -70,14 +69,8 @@ then
   then
     PREVIOUS_TRUNCATED=true
   fi
-  # Picks the newest PR whose body is not blank or the default body (the branch name).
-  # \A and \z trim only the ends of the whole body; ^ and $ would also match at each line.
-  KEPT_FILTER='def trim: sub("\\A[[:space:]]+"; "") | sub("[[:space:]]+\\z"; "");
-    [.[] | select(((.body // "") | tostring | trim) as $b | $b != "" and $b != ((.headRefName // "") | tostring | trim))] | .[0]'
-  KEPT_NUMBER=$(jq -r "$KEPT_FILTER"' | .number // "" | tostring' "$PREVIOUS_PRS" 2>/dev/null) || KEPT_NUMBER=""
-  if jq -e "$KEPT_FILTER"' | . != null' "$PREVIOUS_PRS" >/dev/null 2>&1
+  if sh "$PREVIOUS_BODY_SCRIPT" "$PREVIOUS_PRS"
   then
-    jq -r "$KEPT_FILTER"' | .body | tostring | sub("[[:space:]]+\\z"; "")' "$PREVIOUS_PRS" > "$WORK_DIR/previous_body.txt" 2>/dev/null || true
     KEEP_PREVIOUS_BODY=true
   fi
 fi
@@ -160,7 +153,8 @@ resolve_base() {
   BEFORE=""
   if [ -n "$EVENT_PATH" ] && [ -r "$EVENT_PATH" ]
   then
-    BEFORE=$(jq -r '.before // empty' "$EVENT_PATH" 2>/dev/null) || BEFORE=""
+    # After a force push, `before` is on the replaced history and can't be a base.
+    BEFORE=$(jq -r 'if .forced == true then empty else .before // empty end' "$EVENT_PATH" 2>/dev/null) || BEFORE=""
   fi
   # GitHub sends all zeros as `before` when a push creates the branch.
   case "$BEFORE" in
@@ -193,6 +187,7 @@ resolve_base() {
 HAS_SOURCE=false
 HAS_CONTEXT=false
 HAS_CURRENT=false
+CURRENT_EMPTY=false
 CURRENT_TRUNCATED=false
 : > "$WORK_DIR/current.diff"
 : > "$WORK_DIR/messages.txt"
@@ -228,6 +223,8 @@ then
           then
             CURRENT_TRUNCATED=true
           fi
+        else
+          CURRENT_EMPTY=true
         fi
       else
         echo "describe_pr: warning: could not diff the current synced changes" >&2
@@ -277,7 +274,14 @@ if [ "$HAS_PREVIOUS" = true ]
 then
   PROMPT_INTRO="$PROMPT_INTRO"' This pull request replaces earlier pull requests that were closed: their titles and descriptions are listed in the previous pull requests section, newest first, and the diff this pull request makes also contains their changes. The user message can also include a current synced diff with only the changes of the latest source push.'
   PROMPT_TITLE=' Write a concise, specific title under about 70 characters, without any branch name, that summarizes the changes of the earlier pull requests plus the current change.'
-  if [ "$KEEP_PREVIOUS_BODY" = true ]
+  if [ "$CURRENT_EMPTY" = true ]
+  then
+    PROMPT_INTRO="$PROMPT_INTRO"' The latest source push changed none of the synced files, so this pull request carries the earlier changes forward with nothing new.'
+  fi
+  if [ "$CURRENT_EMPTY" = true ] && [ "$KEEP_PREVIOUS_BODY" = true ]
+  then
+    PROMPT_BODY=' Write a markdown body of one short sentence, to be appended to the existing description of the most recent earlier pull request, saying that the latest source push did not change any synced files. Do not describe the latest source commits or the earlier changes, and do not add a heading.'
+  elif [ "$KEEP_PREVIOUS_BODY" = true ]
   then
     PROMPT_BODY=' Write a markdown body that describes ONLY the current changes (the current synced diff when provided, otherwise the latest source commit messages), as a section that will be appended to the existing description of the most recent earlier pull request that has a real description (not just its branch name). Do not repeat or summarize the earlier descriptions or the earlier changes, and do not add a heading for the whole pull request. Use the context diff and commit messages to explain why the current changes were made. You may mention related source changes that are not part of this pull request in at most one brief line.'
   fi
@@ -304,6 +308,7 @@ jq -n \
   --arg has_context "$HAS_CONTEXT" \
   --arg has_previous "$HAS_PREVIOUS" \
   --arg has_current "$HAS_CURRENT" \
+  --arg current_empty "$CURRENT_EMPTY" \
   --arg current_truncated "$CURRENT_TRUNCATED" \
   --arg previous_truncated "$PREVIOUS_TRUNCATED" \
   --rawfile previous_prs "$WORK_DIR/previous_prs.txt" \
@@ -354,6 +359,8 @@ jq -n \
             "The changes of the latest source push to the synced files (a part of the diff below):\n"
             + (if $current_truncated == "true" then "The current synced diff below was truncated and is incomplete.\n" else "" end)
             + "<current_synced_diff>\n" + $current_diff + "\n</current_synced_diff>\n\n"
+          elif $current_empty == "true" then
+            "The latest source push made no changes to the synced files.\n\n"
           else "" end)
         + "Stat of the changes this pull request makes:\n<diff_stat>\n" + $stat + "</diff_stat>\n\n"
         + (if $truncated == "true" then "The diff below was truncated and is incomplete.\n" else "" end)
@@ -404,17 +411,7 @@ then
 fi
 if [ "$KEEP_PREVIOUS_BODY" = true ]
 then
-  cat "$WORK_DIR/previous_body.txt" > "$WORK_DIR/assembled.txt"
-  printf '\n---\n\n' >> "$WORK_DIR/assembled.txt"
-  cat "$WORK_DIR/generated.txt" >> "$WORK_DIR/assembled.txt"
-  ASSEMBLED_SIZE=$(wc -c < "$WORK_DIR/assembled.txt" | tr -d ' ')
-  if [ "$ASSEMBLED_SIZE" -gt "$MAX_BODY_BYTES" ]
-  then
-    cat "$WORK_DIR/generated.txt"
-    printf '\nEarlier updates: #%s\n' "$KEPT_NUMBER"
-  else
-    cat "$WORK_DIR/assembled.txt"
-  fi
+  sh "$PREVIOUS_BODY_SCRIPT" "$PREVIOUS_PRS" "$WORK_DIR/generated.txt" || fail "could not assemble the body"
 else
   cat "$WORK_DIR/generated.txt"
 fi

@@ -185,8 +185,29 @@ test_failing_close_warns_and_continues() {
 }
 
 run_prev() {
-  sh "$PREV" "$1" "org/source" "abc123" > "$OUT" 2> "$ERR"
+  printf 'Source commit: https://github.com/org/source/commit/abc123\n' > "$CASE_DIR/section"
+  sh "$PREV" "$1" "$CASE_DIR/section" > "$OUT" 2> "$ERR"
   STATUS=$?
+}
+
+test_previous_body_without_section_only_reports_status() {
+  pr_json 3 2024-03-01T00:00:00Z "Real body" | jq -s . > "$CASE_DIR/closed.json"
+  sh "$PREV" "$CASE_DIR/closed.json" > "$OUT" 2> "$ERR"
+  assert_eq 0 "$?" "found"
+  assert_eq "" "$(cat "$OUT")" "no output"
+  pr_json 3 2024-03-01T00:00:00Z "" | jq -s . > "$CASE_DIR/closed.json"
+  sh "$PREV" "$CASE_DIR/closed.json" > "$OUT" 2> "$ERR"
+  assert_nonzero "$?" "not found"
+}
+
+test_previous_body_handles_non_array_and_non_string_body() {
+  echo '{"number":1,"body":"x","headRefName":"b"}' > "$CASE_DIR/closed.json"
+  run_prev "$CASE_DIR/closed.json"
+  assert_nonzero "$STATUS" "object input"
+  echo '[{"number":4,"body":123,"headRefName":"b"}]' > "$CASE_DIR/closed.json"
+  run_prev "$CASE_DIR/closed.json"
+  assert_eq 0 "$STATUS" "numeric body"
+  assert_eq "123" "$(sed -n 1p "$OUT")" "numeric body kept as text"
 }
 
 test_previous_body_uses_most_recent_pr_with_source_line() {
@@ -299,7 +320,9 @@ for t in \
   test_previous_body_fails_for_empty_array_null_body_and_missing_file \
   test_wildcard_labels_are_passed_literally \
   test_previous_body_treats_default_body_with_trailing_newline_as_default \
-  test_previous_body_over_cap_starts_fresh
+  test_previous_body_over_cap_starts_fresh \
+  test_previous_body_without_section_only_reports_status \
+  test_previous_body_handles_non_array_and_non_string_body
 do
   run_test "$t"
 done

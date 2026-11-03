@@ -588,6 +588,23 @@ test_event_before_not_in_source_falls_back_to_previous_commit() {
   assert_in_context "UNIQUE_other3_txt"
 }
 
+test_forced_push_ignores_before_and_uses_previous_commit() {
+  src_init
+  src_commit "second source commit" other2.txt
+  src_commit "third source commit" other3.txt
+  src_clone
+  EVENT="$CASE_DIR/event.json"
+  jq -n --arg before "$SRC_C1" '{before: $before, forced: true}' > "$EVENT"
+  write_synced_list
+  write_response end_turn "$good_text"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "third source commit"
+  assert_prompt_lacks "second source commit"
+  assert_in_context "UNIQUE_other3_txt"
+  assert_not_in_context "UNIQUE_other2_txt"
+}
+
 test_shallow_source_checkout_is_deepened_for_context() {
   src_init
   src_commit "second source commit" other2.txt
@@ -887,6 +904,33 @@ test_empty_current_synced_diff_is_not_flagged_as_present() {
   assert_prompt_contains "unsynced only"
 }
 
+test_empty_current_synced_diff_asks_for_no_new_changes_line() {
+  commit_files synced.txt
+  src_init
+  src_commit "unsynced only" unsynced.txt
+  src_clone
+  write_event "$SRC_C1"
+  write_synced_list synced.txt
+  write_response end_turn "$good_text"
+  write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_contains "The latest source push made no changes to the synced files."
+  assert_system_contains "changed none of the synced files"
+  assert_system_contains "did not change any synced files"
+  assert_system_lacks "otherwise the latest source commit messages"
+  assert_eq "Newest earlier body" "$(sed -n 2p "$OUT")" "previous body kept"
+}
+
+test_non_empty_current_synced_diff_has_no_empty_notice() {
+  setup_previous_source
+  write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
+  ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
+  assert_success_with_title
+  assert_prompt_lacks "made no changes to the synced files"
+  assert_system_lacks "changed none of the synced files"
+}
+
 test_previous_prs_truncation_note_only_when_cut() {
   setup_previous_source
   write_previous "$(previous_fixture 'Newest earlier body' sync-new)"
@@ -937,10 +981,10 @@ test_over_cap_body_starts_fresh_with_earlier_updates_line() {
   write_previous "$(previous_fixture "$big" sync-new)"
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
-  assert_eq "## Summary" "$(sed -n 2p "$OUT")" "generated section first"
+  assert_eq "Earlier updates: #12" "$(sed -n 2p "$OUT")" "earlier updates line first"
+  assert_eq "## Summary" "$(sed -n 4p "$OUT")" "generated section"
   assert_file_lacks "$OUT" "xxxxxxxxxx" "previous body not kept"
   assert_file_lacks "$OUT" "---" "no separator"
-  assert_eq "Earlier updates: #12" "$(tail -n 1 "$OUT")" "earlier updates line"
   size=$(wc -c < "$OUT" | tr -d ' ')
   [ "$size" -lt 60000 ] || fail_assert "output too large: $size"
 }
@@ -957,8 +1001,11 @@ test_over_cap_body_keeps_partial_note_before_earlier_updates_line() {
   )
   ANTHROPIC_API_KEY="$FAKE_KEY" run_with_source
   assert_success_with_title
-  assert_eq "Earlier updates: #12" "$(tail -n 1 "$OUT")" "earlier updates line"
-  assert_file_contains "$OUT" "_Generated from a partial diff" "partial note kept"
+  assert_eq "Earlier updates: #12" "$(sed -n 2p "$OUT")" "earlier updates line first"
+  case "$(tail -n 1 "$OUT")" in
+    "_Generated from a partial diff"*) ;;
+    *) fail_assert "partial note not last line" ;;
+  esac
 }
 
 test_body_under_cap_is_kept_whole() {
@@ -1120,6 +1167,7 @@ for t in \
   test_before_all_zeros_falls_back_to_previous_commit \
   test_missing_event_path_falls_back_to_previous_commit \
   test_event_before_not_in_source_falls_back_to_previous_commit \
+  test_forced_push_ignores_before_and_uses_previous_commit \
   test_shallow_source_checkout_is_deepened_for_context \
   test_failed_deepen_skips_context_with_warning \
   test_no_source_info_describes_synced_diff_only \
@@ -1137,6 +1185,8 @@ for t in \
   test_current_synced_diff_applies_exclusion_globs \
   test_no_current_synced_diff_without_synced_files \
   test_empty_current_synced_diff_is_not_flagged_as_present \
+  test_empty_current_synced_diff_asks_for_no_new_changes_line \
+  test_non_empty_current_synced_diff_has_no_empty_notice \
   test_previous_prs_truncation_note_only_when_cut \
   test_older_real_body_is_kept_when_newest_has_default_body \
   test_body_equal_to_branch_apart_from_trailing_newline_is_default \

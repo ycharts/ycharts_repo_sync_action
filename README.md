@@ -73,7 +73,7 @@ Either search looks at up to 100 pull requests. A pull request that can't be clo
 By default the pull request title is `destination_head_branch` and the body is the previous pull request's body, so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
 
 * The title is `<destination_head_branch>: <generated title>`. It summarizes the changes of the closed pull requests plus the current change.
-* The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes. If there is no previous body, the body is a full generated description.
+* The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes. If the latest push changed none of the synced files, that section is one line saying so. If there is no previous body, the body is a full generated description.
 * The body ends with, in order, the generated content, a note that the diff was truncated (only when it was), and a `Source commit:` link.
 
 What is sent to Anthropic:
@@ -82,7 +82,7 @@ What is sent to Anthropic:
 * The diff the new pull request makes against the destination branch (up to 200 KB), and, only when there are closed pull requests, the synced-files list is non-empty, the source base commit can be reached, and the diff is non-empty, a diff of only the latest push's changes to the synced files (up to 100 KB).
 * The source commit messages (up to 50 commits and 20 KB), a stat of the whole source change, and a diff of source changes outside the synced files (up to 100 KB), marked as not part of the pull request.
 
-The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing event payload, or a force push where `before` is not an ancestor, the range is the pushed commit alone. `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`. If the base commit can't be reached, the context diffs are skipped with a warning and the description is built from the synced diff.
+The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing event payload, a force push, or a `before` that is not an ancestor, the range is the pushed commit alone. The source repository is the git repository that contains `source_folder`, so it can be checked out anywhere, including under an `actions/checkout` `path:`. If `source_folder` is not in a git repository, the source commits and context diff are skipped with a warning. `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`. If the base commit can't be reached, the context diffs are skipped with a warning and the description is built from the synced diff.
 
 The diffs leave out `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map` at any depth, plus anything matching `pr_description_exclude`. When the destination diff is larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
 
@@ -93,5 +93,5 @@ The previous body comes from the newest closed pull request with a real descript
 
 Nothing caps the body as a whole. The 60,000-byte limit only decides whether the previous body is kept, and it applies whether or not generation succeeded:
 
-* If generation succeeds and the previous body, the `---` line, and the generated section would exceed the limit, the body is the generated section followed by an `Earlier updates: #N` link, without the previous body.
-* If generation is off or fails and the previous body is too large, the body is an `Earlier updates: #N` link followed by the `Source commit:` link.
+* If the previous body, the `---` line, and what follows it would exceed the limit, an `Earlier updates: #N` link replaces the previous body and the `---` line.
+* After a successful generation, what follows is the generated section. When generation is off or fails, it is the `Source commit:` link.

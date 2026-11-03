@@ -2,6 +2,7 @@ FROM python:3-alpine
 
 RUN apk add --no-cache git
 
+# The base image's WORKDIR is /, so the `rm -fr *` below needs its own directory.
 WORKDIR /tmp/gh-install
 
 RUN wget -q  https://api.github.com/repos/cli/cli/releases/latest \

@@ -28,6 +28,8 @@ class SyncError(Exception):
 class CommandRunner:
     def __init__(self, token=None, base_env=None):
         self.env = dict(os.environ if base_env is None else base_env)
+        # Pass the token through the env, never args:
+        # CommandError messages include the args and are printed in ::error:: lines.
         if token:
             self.env["GITHUB_TOKEN"] = token
 
@@ -88,6 +90,8 @@ class GitHubClient:
         self.runner = runner
 
     def setup_git_auth(self):
+        # Not a token in the clone URL: libcurl 8.23 sends URL credentials
+        # only on the first request, so the clone fails with a 401 partway through.
         self.runner(["gh", "auth", "setup-git"])
 
     def list_open_prs(self, cwd, title_search):
@@ -258,6 +262,8 @@ class RepoSync:
 
         if s.labels:
             print("Adding labels to the pull request", flush=True)
+        # One at a time after creation: a label missing from the destination repo
+        # would fail `gh pr create --label` outright.
         for label in s.labels:
             try:
                 self.github.add_label(clone_dir, s.head_branch, label)

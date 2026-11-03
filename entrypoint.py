@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from repo_sync.commands import CommandError, Runner
-from repo_sync.git import GitClient, GitHubClient
+from repo_sync.git import GitClient, GitHubClient, MissingTokenError
 from repo_sync.settings import ConfigError, Settings
 from repo_sync.sync import RepoSync, SyncError
 
@@ -20,10 +20,11 @@ def main(
     clock: Callable[[], datetime] | None = None,
 ) -> int:
     env = os.environ if env is None else env
+    if env.get("API_TOKEN_GITHUB"):
+        os.environ["GITHUB_TOKEN"] = env["API_TOKEN_GITHUB"]
     try:
         settings = Settings.from_env(env, now=clock)
         if runner is None:
-            # The default CommandRunner reads API_TOKEN_GITHUB from os.environ, not env.
             sync = RepoSync(settings)
         else:
             sync = RepoSync(settings, GitClient(runner), GitHubClient(runner))
@@ -31,6 +32,9 @@ def main(
     except ConfigError as exc:
         for message in exc.messages:
             print(f"::error::{escape(message)}", flush=True)
+        return 1
+    except MissingTokenError as exc:
+        print(f"::error::{escape(str(exc))}", flush=True)
         return 1
     except CommandError as exc:
         print(f"::error::{escape(str(exc))}", flush=True)

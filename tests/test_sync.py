@@ -7,7 +7,7 @@ from repo_sync.commands import CommandError
 from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync, SyncError
-from tests.helpers import FakeRunner, FlowTestCase, base_env
+from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
 
 
 class RepoSyncTest(FlowTestCase):
@@ -108,6 +108,7 @@ class RepoSyncTest(FlowTestCase):
 
 class CopyFilesTest(unittest.TestCase):
     def setUp(self) -> None:
+        patch_github_token(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)

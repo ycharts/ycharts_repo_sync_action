@@ -1,13 +1,15 @@
+import os
 import unittest
 from unittest import mock
 
 from repo_sync.commands import CommandError
-from repo_sync.git import GitClient, GitHubClient
-from tests.helpers import FakeRunner
+from repo_sync.git import GitClient, GitHubClient, MissingTokenError
+from tests.helpers import FakeRunner, patch_github_token
 
 
 class GitClientTest(unittest.TestCase):
     def setUp(self) -> None:
+        patch_github_token(self)
         self.runner = FakeRunner()
         self.git = GitClient(self.runner)
 
@@ -51,8 +53,26 @@ class GitClientTest(unittest.TestCase):
         runner_class.assert_called_once_with()
         self.assertIs(git.runner, runner_class.return_value)
 
+    def test_requires_github_token(self) -> None:
+        for value in (None, ""):
+            with self.subTest(value=value):
+                env = {} if value is None else {"GITHUB_TOKEN": value}
+                with mock.patch.dict(os.environ, env):
+                    if value is None:
+                        os.environ.pop("GITHUB_TOKEN")
+                    with self.assertRaises(MissingTokenError) as ctx:
+                        GitClient(FakeRunner())
+                self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
+
+    def test_constructs_with_github_token(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "t"}):
+            GitClient(FakeRunner())
+
 
 class GitHubClientTest(unittest.TestCase):
+    def setUp(self) -> None:
+        patch_github_token(self)
+
     def test_setup(self) -> None:
         runner = FakeRunner()
         GitHubClient(runner).setup_git_auth()
@@ -101,6 +121,21 @@ class GitHubClientTest(unittest.TestCase):
             gh = GitHubClient()
         runner_class.assert_called_once_with()
         self.assertIs(gh.runner, runner_class.return_value)
+
+    def test_requires_github_token(self) -> None:
+        for value in (None, ""):
+            with self.subTest(value=value):
+                env = {} if value is None else {"GITHUB_TOKEN": value}
+                with mock.patch.dict(os.environ, env):
+                    if value is None:
+                        os.environ.pop("GITHUB_TOKEN")
+                    with self.assertRaises(MissingTokenError) as ctx:
+                        GitHubClient(FakeRunner())
+                self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
+
+    def test_constructs_with_github_token(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "t"}):
+            GitHubClient(FakeRunner())
 
 
 if __name__ == "__main__":

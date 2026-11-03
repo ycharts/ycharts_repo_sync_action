@@ -3,8 +3,19 @@ import os
 from repo_sync.commands import CommandError, CommandRunner, Runner
 
 
+class MissingTokenError(Exception):
+    def __init__(self) -> None:
+        super().__init__("GITHUB_TOKEN is not set; set the API_TOKEN_GITHUB env var on the step")
+
+
+def require_token() -> None:
+    if not os.environ.get("GITHUB_TOKEN"):
+        raise MissingTokenError()
+
+
 class GitClient:
     def __init__(self, runner: Runner | None = None) -> None:
+        require_token()
         self.runner: Runner = runner or CommandRunner()
 
     def configure_user(self, email: str, name: str) -> None:
@@ -38,6 +49,7 @@ class GitClient:
 
 class GitHubClient:
     def __init__(self, runner: Runner | None = None) -> None:
+        require_token()
         self.runner: Runner = runner or CommandRunner()
 
     def setup_git_auth(self) -> None:

@@ -80,6 +80,33 @@ class EntrypointTest(FlowTestCase):
         self.assertIn("blocker", out)
         self.assertNotIn(["git", "checkout", "-b", "sync-branch"], runner.commands)
 
+    def test_exports_api_token_as_github_token(self) -> None:
+        os.environ.pop("GITHUB_TOKEN")
+        code, _ = self.main(FakeRunner(), self.env(API_TOKEN_GITHUB="exported"))
+        self.assertEqual(code, 0)
+        self.assertEqual(os.environ["GITHUB_TOKEN"], "exported")
+
+    def test_empty_api_token_keeps_existing_github_token(self) -> None:
+        code, _ = self.main(FakeRunner(), self.env(API_TOKEN_GITHUB=""))
+        self.assertEqual(code, 0)
+        self.assertEqual(os.environ["GITHUB_TOKEN"], "test-token")
+
+    def test_missing_token_fails_before_any_command(self) -> None:
+        os.environ.pop("GITHUB_TOKEN")
+        env = self.env()
+        del env["API_TOKEN_GITHUB"]
+        runner = FakeRunner()
+        code, out = self.main(runner, env)
+        self.assertEqual(code, 1)
+        self.assertIn("::error::", out)
+        self.assertIn("API_TOKEN_GITHUB", out)
+        self.assertEqual(runner.calls, [])
+
+    def test_token_value_never_printed(self) -> None:
+        code, out = self.main(FakeRunner(failures={("git", "clone"): 128}), self.env(API_TOKEN_GITHUB="s3cr3t"))
+        self.assertEqual(code, 128)
+        self.assertNotIn("s3cr3t", out)
+
     def test_no_runner_builds_repo_sync_from_settings_only(self) -> None:
         with mock.patch("entrypoint.RepoSync") as repo_sync:
             code = entrypoint.main(env=self.env())

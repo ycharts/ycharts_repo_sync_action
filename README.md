@@ -41,7 +41,7 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning.
 
 ## ENV
-* API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:
+* API_TOKEN_GITHUB: Required; the action fails if it is missing. You must create a personal access token in you account. Follow the link:
 - [Personal access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
 
 > You must select the scopes: 'repo = Full control of private repositories', 'admin:org = read:org' and 'write:discussion = Read:discussion'; 

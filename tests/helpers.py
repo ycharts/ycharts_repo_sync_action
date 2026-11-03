@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+from unittest import mock
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
 
@@ -62,8 +63,15 @@ def base_env(**overrides: str) -> dict[str, str]:
     return env
 
 
+def patch_github_token(test: unittest.TestCase) -> None:
+    patcher = mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
 class FlowTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        patch_github_token(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)

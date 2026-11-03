@@ -45,13 +45,15 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning. When set, these labels also decide which existing pull requests the action closes (see Behavior Notes).
 * generate_pr_description: [optional] Set to `true` to generate the pull request title and description with the Claude API. Default is `false`. See Pull request description below.
 * anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
-* pr_description_exclude: [optional] Comma-separated globs of files to leave out of the diff sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat.
+* pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Globs are matched from the repository root, so `dist/**` matches the root `dist` folder and `*.snap` matches only root-level files; use `**/*.snap` to match at any depth. Excluded files still appear in the diff stat and as a header line without a patch.
 
 ## ENV
 * API_TOKEN_GITHUB: You must create a personal access token in you account. Follow the link:
 - [Personal access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
 
 > You must select the scopes: 'repo = Full control of private repositories', 'admin:org = read:org' and 'write:discussion = Read:discussion'; 
+
+When `generate_pr_description` is `true`, the token must also be able to read the source repository, because the action reads the source push through the GitHub API.
 
 * ANTHROPIC_API_KEY: [optional] Anthropic API key, required only when `generate_pr_description` is `true`. Store it as a secret.
 
@@ -73,25 +75,25 @@ Either search looks at up to 100 pull requests. A pull request that can't be clo
 By default the pull request title is `destination_head_branch` and the body is the previous pull request's body, so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
 
 * The title is `<destination_head_branch>: <generated title>`. It summarizes the changes of the closed pull requests plus the current change.
-* The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes. If the latest push changed none of the synced files, that section is one line saying so. If there is no previous body, the body is a full generated description.
-* The body ends with, in order, the generated content, a note that the diff was truncated (only when it was), and a `Source commit:` link.
+* The body is the previous body (see below), then a `---` line, then a generated section that describes only the current changes, then a `Source commit:` link. If the latest push changed none of the synced files, the generated section is one line saying so. If there is no previous body, the body is the generated section and the link.
+
+The action reads the source push from the GitHub API, not from the local checkout, so `API_TOKEN_GITHUB` must be able to read the source repository as well as write to the destination. The push is `compare/{before}...{sha}`, where `before` comes from the push event. When the push created the branch, was forced, or the event payload is missing, it is the single pushed commit. The compare API returns at most 300 files and 250 commits, so a larger push is described from what it returns.
 
 What is sent to Anthropic:
 
 * The titles and bodies of the closed pull requests, newest first (up to 30 KB).
-* The diff the new pull request makes against the destination branch (up to 200 KB), and, only when there are closed pull requests, the synced-files list is non-empty, the source base commit can be reached, and the diff is non-empty, a diff of only the latest push's changes to the synced files (up to 100 KB).
-* The source commit messages (up to 50 commits and 20 KB), a stat of the whole source change, and a diff of source changes outside the synced files (up to 100 KB), marked as not part of the pull request.
+* This push's commit messages (up to 50 commits and 20 KB).
+* This push's per-file patches for the synced files only (up to 200 KB). Files matching the built-in or `pr_description_exclude` globs keep their header line but drop their patch.
+* The diff stat of the new pull request against the destination branch (up to 20 KB).
 
-The source range runs from the `before` commit of the push event through the pushed commit. For a new branch, a missing event payload, a force push, or a `before` that is not an ancestor, the range is the pushed commit alone. The source repository is the git repository that contains `source_folder`, so it can be checked out anywhere, including under an `actions/checkout` `path:`. If `source_folder` is not in a git repository, the source commits and context diff are skipped with a warning. `actions/checkout` fetches one commit by default, so the action deepens the source checkout itself (up to four fetches of 50 commits) using the credentials `actions/checkout` persists. Keep its default `persist-credentials: true`. If the base commit can't be reached, the context diffs are skipped with a warning and the description is built from the synced diff.
+The built-in exclusions are `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` at any depth, and `*.min.js`, `*.min.css`, and `*.map`. When the patches are larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
 
-The diffs leave out `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map` at any depth, plus anything matching `pr_description_exclude`. When the destination diff is larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
-
-If generation fails for any reason (missing `ANTHROPIC_API_KEY`, an API error, unparseable output), the action logs a warning and uses the default title with the previous body. It uses the previous body, then adds a `---` line and a `Source commit:` link. With no previous body, the body is `destination_head_branch`.
+If generation fails for any reason (missing `ANTHROPIC_API_KEY`, a failed API call, an Anthropic error, unparseable output), the action logs a warning and uses the default title with the non-generated body: the previous body, a `---` line, and the `Source commit:` link. With no previous body, the body is `destination_head_branch`.
 
 ### Previous body
 The previous body comes from the newest closed pull request with a real description. A body that is empty or just the branch name doesn't count. This applies whether or not generation succeeded.
 
-Nothing caps the body as a whole. The 60,000-byte limit only decides whether the previous body is kept, and it applies whether or not generation succeeded:
+Nothing caps the body as a whole. The 60,000-byte limit only decides whether the previous body is kept:
 
 * If the previous body, the `---` line, and what follows it would exceed the limit, an `Earlier updates: #N` link replaces the previous body and the `---` line.
-* After a successful generation, what follows is the generated section. When generation is off or fails, it is the `Source commit:` link.
+* What follows is the generated section and `Source commit:` link after a successful generation, and the `Source commit:` link alone otherwise.

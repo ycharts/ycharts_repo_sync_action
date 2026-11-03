@@ -52,6 +52,24 @@ echo "Copying contents to git repo"
 mkdir -p $CLONE_DIR/$INPUT_DESTINATION_FOLDER/
 cd $INPUT_SOURCE_FOLDER
 cp -r --parents $INPUT_SOURCE_FILES "$CLONE_DIR/$INPUT_DESTINATION_FOLDER/"
+SYNCED_FILES_LIST=""
+SOURCE_PREFIX=""
+if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+then
+  SYNCED_FILES_LIST="$CLONE_DIR.synced_files"
+  # describe_pr.sh needs paths relative to the source repo root, not INPUT_SOURCE_FOLDER.
+  # Asking git finds the repo wherever it was checked out, not only at GITHUB_WORKSPACE.
+  # safe.directory is needed because the workspace is owned by another user.
+  if ! SOURCE_PREFIX=$(git -c safe.directory='*' rev-parse --show-prefix 2>/dev/null)
+  then
+    echo "Warning: source_folder is not inside a git repository, synced paths can't be made relative to the repository root, so the source diff is not filtered to the synced files"
+    SOURCE_PREFIX=""
+  fi
+  # Left unquoted so find sees the same word-splitting and globbing as the cp above.
+  # Filenames containing newlines are not handled.
+  { find $INPUT_SOURCE_FILES \( -type f -o -type l \) -print 2>/dev/null || true; } \
+    | sed "s#^\./##; s#^#$SOURCE_PREFIX#; s#//*#/#g" > "$SYNCED_FILES_LIST" || true
+fi
 cd -
 cd "$CLONE_DIR"
 git checkout -b "$INPUT_DESTINATION_HEAD_BRANCH"
@@ -62,15 +80,41 @@ if git status | grep -q "Changes to be committed"
 then
   git commit --message "Update from https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
   echo "Closing existing PRs"
-  gh pr list --search "is:pr is:open $INPUT_DESTINATION_HEAD_BRANCH_PREFIX in:title"| while IFS= read -r line; do
-    prid=$(echo $line | awk '{print $1;}')
-    gh pr close $prid
-  done
+  CLOSED_PRS_FILE="$CLONE_DIR.closed_prs.json"
+  /close_prs.sh "$INPUT_DESTINATION_HEAD_BRANCH_PREFIX" "$INPUT_PULL_REQUEST_LABELS" "$CLOSED_PRS_FILE"
   echo "Pushing git commit"
   git push -u origin HEAD:$INPUT_DESTINATION_HEAD_BRANCH
   echo "Creating a pull request"
-  gh pr create --title $INPUT_DESTINATION_HEAD_BRANCH \
-               --body $INPUT_DESTINATION_HEAD_BRANCH \
+  PR_GENERATED=false
+  if [ "$INPUT_GENERATE_PR_DESCRIPTION" = true ]
+  then
+    echo "Generating pull request description"
+    set +x
+    if GENERATED=$(ANTHROPIC_MODEL="$INPUT_ANTHROPIC_MODEL" DESCRIBE_PR_EXCLUDE="$INPUT_PR_DESCRIPTION_EXCLUDE" /describe_pr.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "${GITHUB_EVENT_PATH:-}" "$SYNCED_FILES_LIST" "$CLOSED_PRS_FILE")
+    then
+      PR_GENERATED=true
+    else
+      echo "Warning: could not generate the pull request description, using the default title and body"
+    fi
+    set -x
+  fi
+  SECTION_FILE="$CLONE_DIR.section"
+  SOURCE_LINE="Source commit: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+  if [ "$PR_GENERATED" = true ]
+  then
+    PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH: $(printf '%s\n' "$GENERATED" | head -n 1)"
+    {
+      printf '%s\n' "$GENERATED" | tail -n +2
+      printf '\n%s\n' "$SOURCE_LINE"
+    } > "$SECTION_FILE"
+  else
+    PR_TITLE="$INPUT_DESTINATION_HEAD_BRANCH"
+    printf '%s\n' "$SOURCE_LINE" > "$SECTION_FILE"
+  fi
+  PR_BODY_FILE="$CLONE_DIR.pr_body"
+  /build_pr_body.sh "$CLOSED_PRS_FILE" "$SECTION_FILE" "$PR_GENERATED" "$INPUT_DESTINATION_HEAD_BRANCH" > "$PR_BODY_FILE"
+  gh pr create --title "$PR_TITLE" \
+               --body-file "$PR_BODY_FILE" \
                --base $INPUT_DESTINATION_BASE_BRANCH \
                --head $INPUT_DESTINATION_HEAD_BRANCH \
                   $PULL_REQUEST_REVIEWERS

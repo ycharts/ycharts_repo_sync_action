@@ -29,7 +29,8 @@ This GitHub Action copies a folder from the current repository to a location in 
             pull_request_labels: 'label1,label2'
 
 ## Variables
-* source_folder: The folder to be moved. Uses the same syntax as the `cp` command. Incude the path for any files not in the repositories root directory.
+* source_folder: The folder, relative to the workspace, that `source_files` are resolved against.
+* source_files: Whitespace-separated files, directories, or glob patterns (e.g. `docs/*.md`) relative to `source_folder`. Each match is copied to the same relative path in the destination. A pattern that matches nothing fails the action.
 * destination_repo: The repository to place the file or directory in.
 * destination_folder: [optional] The folder in the destination repository to place the file in, if not the root directory.
 * user_email: The GitHub user email associated with the API token secret.
@@ -48,3 +49,8 @@ This GitHub Action copies a folder from the current repository to a location in 
 
 ## Behavior Notes
 The action will create any destination paths if they don't exist. It will also overwrite existing files if they already exist in the locations being copied to. It will not delete the entire destination repository.
+
+## Development
+The action is written in Python using only the standard library. Run the tests from the repository root:
+
+    python3 -m unittest discover -s tests

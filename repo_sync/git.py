@@ -91,26 +91,27 @@ class PullRequest:
         self.reviewers = ""
 
     def create(self) -> None:
-        required = {
-            "title": self.title,
-            "body": self.body,
-            "base": self.base,
-            "head": self.head,
-        }
-        missing = [name for name, value in required.items() if value is None]
-        if missing:
+        title, body, base, head = self.title, self.body, self.base, self.head
+        if title is None or body is None or base is None or head is None:
+            required = {"title": title, "body": body, "base": base, "head": head}
+            missing = [name for name, value in required.items() if value is None]
             raise ValueError(f"pull request is missing: {', '.join(missing)}")
         args = [
             "gh", "pr", "create",
-            "--title", str(self.title),
-            "--body", str(self.body),
-            "--base", str(self.base),
-            "--head", str(self.head),
+            "--title", title,
+            "--body", body,
+            "--base", base,
+            "--head", head,
         ]
         if self.reviewers:
             args += ["-r", self.reviewers]
         self.github.runner(args, cwd=self.github.cwd)
 
     def add_label(self, label: str) -> None:
+        if self.head is None:
+            raise ValueError("pull request is missing: head")
         # gh pr edit takes a PR number or its head branch; this passes the branch.
-        self.github.runner(["gh", "pr", "edit", str(self.head), "--add-label", label], cwd=self.github.cwd)
+        self.github.runner(
+            ["gh", "pr", "edit", self.head, "--add-label", label],
+            cwd=self.github.cwd,
+        )

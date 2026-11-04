@@ -100,6 +100,17 @@ class GitHubClientTest(unittest.TestCase):
         GitHubClient(Path("/c"), runner).close_pr(1)
         self.assertEqual([call["cwd"] for call in runner.calls], ["/c", "/c"])
 
+    def test_requires_github_token(self):
+        for value in (None, ""):
+            with self.subTest(value=value):
+                env = {} if value is None else {"GITHUB_TOKEN": value}
+                with mock.patch.dict(os.environ, env):
+                    if value is None:
+                        os.environ.pop("GITHUB_TOKEN")
+                    with self.assertRaises(MissingTokenError) as ctx:
+                        GitHubClient("/c", FakeRunner())
+                self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
+
 
 class PullRequestTest(unittest.TestCase):
     def setUp(self):
@@ -167,17 +178,11 @@ class PullRequestTest(unittest.TestCase):
             [{"args": ["gh", "pr", "edit", "h", "--add-label", "bug"], "cwd": "/c", "capture": False}],
         )
 
-
-    def test_requires_github_token(self):
-        for value in (None, ""):
-            with self.subTest(value=value):
-                env = {} if value is None else {"GITHUB_TOKEN": value}
-                with mock.patch.dict(os.environ, env):
-                    if value is None:
-                        os.environ.pop("GITHUB_TOKEN")
-                    with self.assertRaises(MissingTokenError) as ctx:
-                        GitHubClient("/c", FakeRunner())
-                self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
+    def test_add_label_without_head_raises_and_runs_nothing(self):
+        pr = self.github.new_pull_request()
+        with self.assertRaises(ValueError):
+            pr.add_label("bug")
+        self.assertEqual(self.runner.calls, [])
 
 
 if __name__ == "__main__":

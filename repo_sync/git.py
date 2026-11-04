@@ -24,6 +24,7 @@ class GitClient:
         self.runner(["git", "config", "--global", "user.name", name])
 
     def clone(self, url: str) -> None:
+        # No cwd here: self.cwd is the clone target and may not exist yet.
         self.runner(["git", "clone", url, self.cwd])
 
     def checkout_new_branch(self, branch: str) -> None:

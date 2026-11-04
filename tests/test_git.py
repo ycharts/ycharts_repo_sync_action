@@ -59,7 +59,6 @@ class GitClientTest(unittest.TestCase):
                 self.assertIn("API_TOKEN_GITHUB", str(ctx.exception))
 
 
-
 class GitHubClientTest(unittest.TestCase):
     def setUp(self) -> None:
         patch_github_token(self)

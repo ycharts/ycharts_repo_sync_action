@@ -87,7 +87,6 @@ class RepoSyncTest(FlowTestCase):
         self.assertIn("matched nothing", str(ctx.exception))
 
 
-
 class CopyFilesTest(unittest.TestCase):
     def setUp(self) -> None:
         patch_github_token(self)

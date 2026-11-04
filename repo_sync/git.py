@@ -76,8 +76,34 @@ class GitHubClient:
     def close_pr(self, number: int) -> None:
         self.runner(["gh", "pr", "close", str(number)], cwd=self.cwd)
 
-    def new_pull_request(self) -> "PullRequest":
+    def new_pull_request(self) -> PullRequest:
         return PullRequest(self)
+
+    def _create_pull_request(self, pr: PullRequest) -> None:
+        title, body, base, head = pr.title, pr.body, pr.base, pr.head
+        if title is None or body is None or base is None or head is None:
+            required = {"title": title, "body": body, "base": base, "head": head}
+            missing = [name for name, value in required.items() if value is None]
+            raise ValueError(f"pull request is missing: {', '.join(missing)}")
+        args = [
+            "gh", "pr", "create",
+            "--title", title,
+            "--body", body,
+            "--base", base,
+            "--head", head,
+        ]
+        if pr.reviewers:
+            args += ["-r", pr.reviewers]
+        self.runner(args, cwd=self.cwd)
+
+    def _add_label(self, pr: PullRequest, label: str) -> None:
+        if pr.head is None:
+            raise ValueError("pull request is missing: head")
+        # gh pr edit takes a PR number or its head branch; this passes the branch.
+        self.runner(
+            ["gh", "pr", "edit", pr.head, "--add-label", label],
+            cwd=self.cwd,
+        )
 
 
 class PullRequest:
@@ -91,27 +117,7 @@ class PullRequest:
         self.reviewers = ""
 
     def create(self) -> None:
-        title, body, base, head = self.title, self.body, self.base, self.head
-        if title is None or body is None or base is None or head is None:
-            required = {"title": title, "body": body, "base": base, "head": head}
-            missing = [name for name, value in required.items() if value is None]
-            raise ValueError(f"pull request is missing: {', '.join(missing)}")
-        args = [
-            "gh", "pr", "create",
-            "--title", title,
-            "--body", body,
-            "--base", base,
-            "--head", head,
-        ]
-        if self.reviewers:
-            args += ["-r", self.reviewers]
-        self.github.runner(args, cwd=self.github.cwd)
+        self.github._create_pull_request(self)
 
     def add_label(self, label: str) -> None:
-        if self.head is None:
-            raise ValueError("pull request is missing: head")
-        # gh pr edit takes a PR number or its head branch; this passes the branch.
-        self.github.runner(
-            ["gh", "pr", "edit", self.head, "--add-label", label],
-            cwd=self.github.cwd,
-        )
+        self.github._add_label(self, label)

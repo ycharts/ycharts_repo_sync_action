@@ -131,14 +131,15 @@ class GitHubClient:
         ]
         if pr.reviewers:
             args += ["-r", pr.reviewers]
-        self.runner(args, cwd=self.cwd)
+        output = self.runner(args, cwd=self.cwd, capture=True)
+        match = re.search(r"/pull/(\d+)\s*$", output)
+        pr.number = int(match.group(1)) if match else None
 
     def _add_label(self, pr: PullRequest, label: str) -> None:
-        if pr.head is None:
-            raise ValueError("pull request is missing: head")
-        # gh pr edit takes a PR number or its head branch; this passes the branch.
+        if pr.number is None:
+            raise ValueError("pull request is missing: number")
         self.runner(
-            ["gh", "pr", "edit", pr.head, "--add-label", label],
+            ["gh", "pr", "edit", str(pr.number), "--add-label", label],
             cwd=self.cwd,
         )
 
@@ -148,6 +149,7 @@ class PullRequest:
     body: str | None = None
     base: str | None = None
     head: str | None = None
+    number: int | None = None
 
     def __init__(self, github: GitHubClient) -> None:
         self.github = github

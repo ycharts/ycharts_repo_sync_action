@@ -175,7 +175,7 @@ class PullRequestTest(unittest.TestCase):
                 {
                     "args": ["gh", "pr", "create", "--title", "t", "--body", "b", "--base", "main", "--head", "h"],
                     "cwd": "/c",
-                    "capture": False,
+                    "capture": True,
                 }
             ],
         )
@@ -206,15 +206,29 @@ class PullRequestTest(unittest.TestCase):
         for field in ("title", "body", "base", "head"):
             self.assertIn(field, str(ctx.exception))
 
-    def test_add_label(self):
-        self.pull_request().add_label("bug")
+    def test_add_label_uses_pr_number(self):
+        pr = self.pull_request()
+        pr.number = 7
+        pr.add_label("bug")
         self.assertEqual(
             self.runner.calls,
-            [{"args": ["gh", "pr", "edit", "h", "--add-label", "bug"], "cwd": "/c", "capture": False}],
+            [{"args": ["gh", "pr", "edit", "7", "--add-label", "bug"], "cwd": "/c", "capture": False}],
         )
 
-    def test_add_label_without_head_raises_and_runs_nothing(self):
-        pr = self.github.new_pull_request()
+    def test_create_parses_number_from_url(self):
+        runner = FakeRunner(outputs={("gh", "pr", "create"): "Creating...\nhttps://github.com/org/repo/pull/42\n"})
+        pr = GitHubClient("/c", runner).new_pull_request()
+        pr.title, pr.body, pr.base, pr.head = "t", "b", "main", "h"
+        pr.create()
+        self.assertEqual(pr.number, 42)
+
+    def test_create_without_url_leaves_number_unset(self):
+        pr = self.pull_request()
+        pr.create()
+        self.assertIsNone(pr.number)
+
+    def test_add_label_without_number_raises_and_runs_nothing(self):
+        pr = self.pull_request()
         with self.assertRaises(ValueError):
             pr.add_label("bug")
         self.assertEqual(self.runner.calls, [])

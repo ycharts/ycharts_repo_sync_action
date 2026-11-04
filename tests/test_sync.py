@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections.abc import Sequence
 
 from repo_sync.commands import CommandError
 from repo_sync.settings import Settings
@@ -16,6 +17,9 @@ def prs(*items: tuple[str, str] | tuple[str, str, bool]) -> str:
             for i in items
         ]
     )
+
+
+CREATED = {("gh", "pr", "create"): "https://github.com/org/repo/pull/42\n"}
 
 
 class RepoSyncTest(FlowTestCase):
@@ -67,22 +71,24 @@ class RepoSyncTest(FlowTestCase):
         self.assertNotIn("-r", create)
 
     def test_labels_trimmed_and_added_one_at_a_time(self):
-        runner = FakeRunner(failures={("git", "diff"): 1})
+        runner = FakeRunner(outputs=CREATED, failures={("git", "diff"): 1})
         self.sync(runner, INPUT_PULL_REQUEST_LABELS=" bug , ,docs,, ")
         edits = [c for c in runner.commands if c[:3] == ["gh", "pr", "edit"]]
         self.assertEqual(
             edits,
             [
-                ["gh", "pr", "edit", "sync-branch", "--add-label", "bug"],
-                ["gh", "pr", "edit", "sync-branch", "--add-label", "docs"],
+                ["gh", "pr", "edit", "42", "--add-label", "bug"],
+                ["gh", "pr", "edit", "42", "--add-label", "docs"],
             ],
         )
 
     def test_failing_label_warns_and_continues(self):
-        runner = FakeRunner(failures={("git", "diff"): 1, ("gh", "pr", "edit", "sync-branch", "--add-label", "bad"): 1})
+        runner = FakeRunner(
+            outputs=CREATED, failures={("git", "diff"): 1, ("gh", "pr", "edit", "42", "--add-label", "bad"): 1}
+        )
         _, out = self.sync(runner, INPUT_PULL_REQUEST_LABELS="bad,good")
         self.assertIn("::warning::could not add label 'bad' to the pull request, skipping", out)
-        self.assertEqual(runner.commands[-1], ["gh", "pr", "edit", "sync-branch", "--add-label", "good"])
+        self.assertEqual(runner.commands[-1], ["gh", "pr", "edit", "42", "--add-label", "good"])
 
     def test_failing_command_propagates(self):
         for prefix in [("git", "clone"), ("git", "push"), ("gh", "pr", "create"), ("gh", "auth")]:
@@ -108,20 +114,33 @@ class RepoSyncTest(FlowTestCase):
 
     def test_reuses_open_pr_on_head_and_still_labels(self):
         runner = FakeRunner(
-            outputs={("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}])},
+            outputs={
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "list", "--search"): prs(("5", "sync-branch"), ("8", "sync-branch-20240101000000")),
+            },
             failures={("git", "diff"): 1},
         )
         self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
         self.assertIsNone(next((c for c in runner.commands if c[:3] == ["gh", "pr", "create"]), None))
-        self.assertIn(["gh", "pr", "edit", "sync-branch", "--add-label", "bug"], runner.commands)
+        self.assertIn(["gh", "pr", "edit", "5", "--add-label", "bug"], runner.commands)
+        self.assertEqual(self.closed(runner), ["8"])
 
     def test_fork_pr_on_head_is_not_reused(self):
         runner = FakeRunner(
-            outputs={("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": True}])},
+            outputs={
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": True}]),
+                **CREATED,
+            },
             failures={("git", "diff"): 1},
         )
-        self.sync(runner)
-        self.index(runner, "gh", "pr", "create")
+        self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
+        self.assertIn(
+            ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
+             "--base", "main", "--head", "sync-branch"],
+            runner.commands,
+        )
+        self.assertIn(["gh", "pr", "edit", "42", "--add-label", "bug"], runner.commands)
+        self.assertNotIn(["gh", "pr", "edit", "5", "--add-label", "bug"], runner.commands)
 
     def test_only_matching_heads_closed(self):
         listing = prs(
@@ -141,7 +160,7 @@ class RepoSyncTest(FlowTestCase):
 
     def test_timestamped_head_closes_prefix_and_older_but_not_current(self):
         class CurrentHeadRunner(FakeRunner):
-            def __call__(self, args, cwd=None, capture=False):
+            def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str:
                 if list(args[:4]) == ["gh", "pr", "list", "--search"]:
                     current = next(c[3] for c in self.commands if c[:3] == ["git", "checkout", "-b"])
                     self.outputs = {

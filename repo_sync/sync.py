@@ -124,10 +124,12 @@ class RepoSync:
         pr.base = self.settings.base_branch
         pr.head = self.settings.head_branch
         pr.reviewers = self.settings.reviewers
-        if github.find_open_pr(self.settings.head_branch) is None:
+        existing = github.find_open_pr(self.settings.head_branch)
+        if existing is None:
             print("Creating a pull request", flush=True)
             pr.create()
         else:
+            pr.number = existing
             print("Pull request already open for this branch, reusing it", flush=True)
 
         # Only after the push and PR succeed, so a failure never leaves no PR open.

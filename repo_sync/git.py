@@ -136,6 +136,8 @@ class GitHubClient:
         output = self.runner(args, cwd=self.cwd, capture=True)
         match = re.search(r"/pull/(\d+)\s*$", output)
         pr.number = int(match.group(1)) if match else None
+        if output.strip():
+            print(output.strip(), flush=True)
 
     def _add_label(self, pr: PullRequest, label: str) -> None:
         if pr.number is None:

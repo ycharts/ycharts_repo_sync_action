@@ -137,6 +137,15 @@ class RepoSync:
         for number in github.list_open_prs(self.settings.head_branch_prefix, self.settings.head_branch):
             github.close_pr(number)
 
+        if self.settings.labels and pr.number is None:
+            pr.number = github.find_open_pr(self.settings.head_branch)
+            if pr.number is None:
+                print(
+                    "::warning::could not determine the pull request number, skipping labels",
+                    flush=True,
+                )
+                return
+
         if self.settings.labels:
             print("Adding labels to the pull request", flush=True)
         # One at a time after creation: a label missing from the destination repo

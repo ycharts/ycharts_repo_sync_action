@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import unittest
@@ -219,13 +221,28 @@ class PullRequestTest(unittest.TestCase):
         runner = FakeRunner(outputs={("gh", "pr", "create"): "Creating...\nhttps://github.com/org/repo/pull/42\n"})
         pr = GitHubClient("/c", runner).new_pull_request()
         pr.title, pr.body, pr.base, pr.head = "t", "b", "main", "h"
-        pr.create()
+        with contextlib.redirect_stdout(io.StringIO()):
+            pr.create()
         self.assertEqual(pr.number, 42)
 
     def test_create_without_url_leaves_number_unset(self):
         pr = self.pull_request()
         pr.create()
         self.assertIsNone(pr.number)
+
+    def test_create_prints_captured_output(self):
+        runner = FakeRunner(outputs={("gh", "pr", "create"): "https://github.com/org/repo/pull/42\n"})
+        pr = GitHubClient("/c", runner).new_pull_request()
+        pr.title, pr.body, pr.base, pr.head = "t", "b", "main", "h"
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pr.create()
+        self.assertEqual(out.getvalue(), "https://github.com/org/repo/pull/42\n")
+
+    def test_create_without_output_prints_nothing(self):
+        pr = self.pull_request()
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            pr.create()
+        self.assertEqual(out.getvalue(), "")
 
     def test_add_label_without_number_raises_and_runs_nothing(self):
         pr = self.pull_request()

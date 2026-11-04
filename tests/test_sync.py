@@ -82,6 +82,38 @@ class RepoSyncTest(FlowTestCase):
             ],
         )
 
+    def test_unparsed_url_falls_back_to_lookup_for_labels(self):
+        class LateListRunner(FakeRunner):
+            def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str:
+                listed = sum(1 for c in self.commands if c[:3] == ["gh", "pr", "list"] and "--head" in c)
+                result = super().__call__(args, cwd, capture)
+                if list(args)[:3] == ["gh", "pr", "list"] and "--head" in args and listed == 0:
+                    return ""
+                return result
+
+        runner = LateListRunner(
+            outputs={
+                ("gh", "pr", "create"): "created\n",
+                ("gh", "pr", "list", "--head"): prs(("9", "sync-branch")),
+            },
+            failures={("git", "diff"): 1},
+        )
+        self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
+        self.assertIn(["gh", "pr", "edit", "9", "--add-label", "bug"], runner.commands)
+
+    def test_unparsed_url_and_no_lookup_warns_and_skips_labels(self):
+        runner = FakeRunner(outputs={("gh", "pr", "create"): "created\n"}, failures={("git", "diff"): 1})
+        _, out = self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
+        self.assertIn("::warning::could not determine the pull request number, skipping labels", out)
+        self.assertFalse([c for c in runner.commands if c[:3] == ["gh", "pr", "edit"]])
+
+    def test_unparsed_url_without_labels_does_not_look_up_number(self):
+        runner = FakeRunner(outputs={("gh", "pr", "create"): "created\n"}, failures={("git", "diff"): 1})
+        _, out = self.sync(runner)
+        self.assertNotIn("::warning::", out)
+        lists = [c for c in runner.commands if c[:3] == ["gh", "pr", "list"] and "--head" in c]
+        self.assertEqual(len(lists), 1)
+
     def test_failing_label_warns_and_continues(self):
         runner = FakeRunner(
             outputs=CREATED, failures={("git", "diff"): 1, ("gh", "pr", "edit", "42", "--add-label", "bad"): 1}

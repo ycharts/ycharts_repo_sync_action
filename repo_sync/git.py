@@ -49,6 +49,8 @@ class GitClient:
         self.runner(["git", "commit", "--message", message], cwd=self.cwd)
 
     def remote_branch_exists(self, branch: str) -> bool:
+        # Reads the remote-tracking ref from the clone, without contacting the remote.
+        # --force-with-lease leases against this same ref.
         try:
             self.runner(
                 ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],

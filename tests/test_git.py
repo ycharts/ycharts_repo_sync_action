@@ -24,6 +24,7 @@ class GitClientTest(unittest.TestCase):
         self.git.stage_all()
         self.git.commit("msg")
         self.git.push("br")
+        self.git.push("br", force_with_lease=True)
         self.assertEqual(
             self.runner.calls,
             [
@@ -33,9 +34,32 @@ class GitClientTest(unittest.TestCase):
                 {"args": ["git", "checkout", "-b", "br"], "cwd": "/tmp/c", "capture": False},
                 {"args": ["git", "add", "."], "cwd": "/tmp/c", "capture": False},
                 {"args": ["git", "commit", "--message", "msg"], "cwd": "/tmp/c", "capture": False},
+                {"args": ["git", "push", "-u", "origin", "HEAD:br"], "cwd": "/tmp/c", "capture": False},
                 {"args": ["git", "push", "--force-with-lease", "-u", "origin", "HEAD:br"], "cwd": "/tmp/c", "capture": False},
             ],
         )
+
+    def test_remote_branch_exists_on_exit_0(self):
+        git = GitClient("/tmp/c", FakeRunner(remote_branch_exists=True))
+        self.assertTrue(git.remote_branch_exists("br"))
+
+    def test_remote_branch_missing_on_exit_1(self):
+        self.assertFalse(self.git.remote_branch_exists("br"))
+        self.assertEqual(
+            self.runner.calls,
+            [
+                {
+                    "args": ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/br"],
+                    "cwd": "/tmp/c",
+                    "capture": False,
+                }
+            ],
+        )
+
+    def test_remote_branch_check_other_failure_propagates(self):
+        git = GitClient("/tmp/c", FakeRunner(failures={("git", "rev-parse"): 128}))
+        with self.assertRaises(CommandError):
+            git.remote_branch_exists("br")
 
     def test_staged_changes_detected_on_exit_1(self):
         git = GitClient("/c", FakeRunner(failures={("git", "diff"): 1}))

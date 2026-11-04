@@ -48,8 +48,24 @@ class GitClient:
     def commit(self, message: str) -> None:
         self.runner(["git", "commit", "--message", message], cwd=self.cwd)
 
-    def push(self, branch: str) -> None:
-        self.runner(["git", "push", "--force-with-lease", "-u", "origin", f"HEAD:{branch}"], cwd=self.cwd)
+    def remote_branch_exists(self, branch: str) -> bool:
+        try:
+            self.runner(
+                ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+                cwd=self.cwd,
+            )
+        except CommandError as exc:
+            if exc.returncode == 1:
+                return False
+            raise
+        return True
+
+    def push(self, branch: str, force_with_lease: bool = False) -> None:
+        args = ["git", "push"]
+        if force_with_lease:
+            args.append("--force-with-lease")
+        args += ["-u", "origin", f"HEAD:{branch}"]
+        self.runner(args, cwd=self.cwd)
 
 
 class GitHubClient:

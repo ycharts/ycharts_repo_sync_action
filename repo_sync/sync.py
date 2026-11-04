@@ -116,7 +116,7 @@ class RepoSync:
         )
 
         print("Pushing git commit", flush=True)
-        git.push(self.settings.head_branch)
+        git.push(self.settings.head_branch, force_with_lease=git.remote_branch_exists(self.settings.head_branch))
 
         pr = github.new_pull_request()
         pr.title = self.settings.head_branch

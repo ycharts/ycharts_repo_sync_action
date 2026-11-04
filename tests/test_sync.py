@@ -40,7 +40,8 @@ class RepoSyncTest(FlowTestCase):
                 ["git", "add", "."],
                 ["git", "diff", "--cached", "--quiet"],
                 ["git", "commit", "--message", "Update from https://github.com/org/source/commit/abc123"],
-                ["git", "push", "--force-with-lease", "-u", "origin", "HEAD:sync-branch"],
+                ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/sync-branch"],
+                ["git", "push", "-u", "origin", "HEAD:sync-branch"],
                 ["gh", "pr", "list", "--head", "sync-branch", "--state", "open",
                  "--json", "number,isCrossRepository"],
                 ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
@@ -207,6 +208,26 @@ class RepoSyncTest(FlowTestCase):
         runner = CurrentHeadRunner(failures={("git", "diff"): 1})
         self.sync(runner, INPUT_TIMESTAMP_HEAD_BRANCH="true")
         self.assertEqual(self.closed(runner), ["1", "2"])
+
+    def test_existing_remote_branch_pushes_with_lease(self):
+        runner = FakeRunner(failures={("git", "diff"): 1}, remote_branch_exists=True)
+        self.sync(runner)
+        self.assertIn(["git", "push", "--force-with-lease", "-u", "origin", "HEAD:sync-branch"], runner.commands)
+        self.assertLess(
+            self.index(runner, "git", "rev-parse"), self.index(runner, "git", "push")
+        )
+
+    def test_absent_remote_branch_pushes_plainly(self):
+        runner = FakeRunner(failures={("git", "diff"): 1})
+        self.sync(runner)
+        self.assertIn(["git", "push", "-u", "origin", "HEAD:sync-branch"], runner.commands)
+        self.assertNotIn("--force-with-lease", [a for c in runner.commands for a in c])
+
+    def test_remote_branch_check_failure_propagates_before_push(self):
+        runner = FakeRunner(failures={("git", "diff"): 1, ("git", "rev-parse"): 128})
+        with self.assertRaises(CommandError):
+            self.sync(runner)
+        self.assertFalse(any(c[:2] == ["git", "push"] for c in runner.commands))
 
     def test_push_failure_creates_and_closes_nothing(self):
         runner = FakeRunner(failures={("git", "diff"): 1, ("git", "push"): 1})

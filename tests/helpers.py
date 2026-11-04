@@ -23,10 +23,12 @@ class FakeRunner:
         self,
         outputs: Mapping[tuple[str, ...], str] | None = None,
         failures: Mapping[tuple[str, ...], int] | None = None,
+        remote_branch_exists: bool = False,
     ) -> None:
         self.calls: list[Call] = []
         self.outputs: Mapping[tuple[str, ...], str] = outputs or {}
         self.failures: Mapping[tuple[str, ...], int] = failures or {}
+        self.remote_branch_exists = remote_branch_exists
 
     def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str:
         args = list(args)
@@ -34,6 +36,8 @@ class FakeRunner:
         for prefix, code in self.failures.items():
             if args[: len(prefix)] == list(prefix):
                 raise CommandError(args, code)
+        if args[:2] == ["git", "rev-parse"] and not self.remote_branch_exists:
+            raise CommandError(args, 1)
         if capture:
             for prefix, output in self.outputs.items():
                 if args[: len(prefix)] == list(prefix):

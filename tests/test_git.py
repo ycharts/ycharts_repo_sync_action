@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -30,7 +31,7 @@ class GitClientTest(unittest.TestCase):
                 {"args": ["git", "checkout", "-b", "br"], "cwd": "/tmp/c", "capture": False},
                 {"args": ["git", "add", "."], "cwd": "/tmp/c", "capture": False},
                 {"args": ["git", "commit", "--message", "msg"], "cwd": "/tmp/c", "capture": False},
-                {"args": ["git", "push", "-u", "origin", "HEAD:br"], "cwd": "/tmp/c", "capture": False},
+                {"args": ["git", "push", "--force-with-lease", "-u", "origin", "HEAD:br"], "cwd": "/tmp/c", "capture": False},
             ],
         )
 
@@ -70,19 +71,53 @@ class GitHubClientTest(unittest.TestCase):
         self.assertEqual(runner.commands, [["gh", "auth", "setup-git"]])
 
     def test_list_prs_command_and_parsing(self):
-        cases = {"": [], "7\n": [7], "3\n12\n5\n": [3, 12, 5]}
+        listing = json.dumps(
+            [
+                {"number": 3, "headRefName": "pre", "isCrossRepository": False},
+                {"number": 12, "headRefName": "pre-20240101000000", "isCrossRepository": False},
+                {"number": 13, "headRefName": "pre-20240101000001", "isCrossRepository": True},
+                {"number": 14, "headRefName": "pre-other", "isCrossRepository": False},
+                {"number": 15, "headRefName": "pre-20240101000002", "isCrossRepository": False},
+            ]
+        )
+        cases = {"": [], "[]": [], listing: [3, 12]}
         for output, expected in cases.items():
             runner = FakeRunner(outputs={("gh", "pr", "list"): output})
             with self.subTest(output=output):
-                self.assertEqual(GitHubClient("/c", runner).list_open_prs("pre"), expected)
+                self.assertEqual(GitHubClient("/c", runner).list_open_prs("pre", "pre-20240101000002"), expected)
                 self.assertEqual(
                     runner.calls[0],
                     {
                         "args": [
                             "gh", "pr", "list",
                             "--search", "is:pr is:open pre in:title",
-                            "--json", "number",
-                            "--jq", ".[].number",
+                            "--limit", "100",
+                            "--json", "number,headRefName,isCrossRepository",
+                        ],
+                        "cwd": "/c",
+                        "capture": True,
+                    },
+                )
+
+    def test_find_open_pr(self):
+        cases = {
+            "": None,
+            "[]": None,
+            json.dumps([{"number": 4, "isCrossRepository": True}]): None,
+            json.dumps([{"number": 4, "isCrossRepository": True}, {"number": 6, "isCrossRepository": False}]): 6,
+        }
+        for output, expected in cases.items():
+            runner = FakeRunner(outputs={("gh", "pr", "list"): output})
+            with self.subTest(output=output):
+                self.assertEqual(GitHubClient("/c", runner).find_open_pr("br"), expected)
+                self.assertEqual(
+                    runner.calls[0],
+                    {
+                        "args": [
+                            "gh", "pr", "list",
+                            "--head", "br",
+                            "--state", "open",
+                            "--json", "number,isCrossRepository",
                         ],
                         "cwd": "/c",
                         "capture": True,

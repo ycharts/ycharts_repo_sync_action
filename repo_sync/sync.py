@@ -115,21 +115,24 @@ class RepoSync:
             f"/commit/{self.settings.github_sha}",
         )
 
-        print("Closing existing PRs", flush=True)
-        for number in github.list_open_prs(self.settings.head_branch_prefix):
-            github.close_pr(number)
-
         print("Pushing git commit", flush=True)
         git.push(self.settings.head_branch)
 
-        print("Creating a pull request", flush=True)
         pr = github.new_pull_request()
         pr.title = self.settings.head_branch
         pr.body = self.settings.head_branch
         pr.base = self.settings.base_branch
         pr.head = self.settings.head_branch
         pr.reviewers = self.settings.reviewers
-        pr.create()
+        if github.find_open_pr(self.settings.head_branch) is None:
+            print("Creating a pull request", flush=True)
+            pr.create()
+        else:
+            print("Pull request already open for this branch, reusing it", flush=True)
+
+        print("Closing older PRs", flush=True)
+        for number in github.list_open_prs(self.settings.head_branch_prefix, self.settings.head_branch):
+            github.close_pr(number)
 
         if self.settings.labels:
             print("Adding labels to the pull request", flush=True)

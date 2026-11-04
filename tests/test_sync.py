@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -8,10 +9,20 @@ from repo_sync.sync import RepoSync, SyncError
 from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
 
 
+def prs(*items: tuple[str, str] | tuple[str, str, bool]) -> str:
+    return json.dumps(
+        [
+            {"number": int(i[0]), "headRefName": i[1], "isCrossRepository": i[2] if len(i) > 2 else False}
+            for i in items
+        ]
+    )
+
+
 class RepoSyncTest(FlowTestCase):
     def test_happy_path_order(self):
         runner = FakeRunner(
-            outputs={("gh", "pr", "list"): "3\n9\n"}, failures={("git", "diff"): 1}
+            outputs={("gh", "pr", "list", "--search"): prs(("3", "sync-branch-20240101000000"), ("9", "sync-branch"))},
+            failures={("git", "diff"): 1},
         )
         clone, _ = self.sync(runner, INPUT_PULL_REQUEST_REVIEWERS="r1,r2", INPUT_DESTINATION_BASE_BRANCH="dev")
         self.assertEqual(
@@ -25,13 +36,14 @@ class RepoSyncTest(FlowTestCase):
                 ["git", "add", "."],
                 ["git", "diff", "--cached", "--quiet"],
                 ["git", "commit", "--message", "Update from https://github.com/org/source/commit/abc123"],
-                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
-                 "--json", "number", "--jq", ".[].number"],
-                ["gh", "pr", "close", "3"],
-                ["gh", "pr", "close", "9"],
-                ["git", "push", "-u", "origin", "HEAD:sync-branch"],
+                ["git", "push", "--force-with-lease", "-u", "origin", "HEAD:sync-branch"],
+                ["gh", "pr", "list", "--head", "sync-branch", "--state", "open",
+                 "--json", "number,isCrossRepository"],
                 ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
                  "--base", "dev", "--head", "sync-branch", "-r", "r1,r2"],
+                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
+                 "--limit", "100", "--json", "number,headRefName,isCrossRepository"],
+                ["gh", "pr", "close", "3"],
             ],
         )
         for call in runner.calls[4:]:
@@ -78,6 +90,86 @@ class RepoSyncTest(FlowTestCase):
             with self.subTest(prefix=prefix):
                 with self.assertRaises(CommandError):
                     self.sync(runner)
+
+    def index(self, runner: FakeRunner, *prefix: str) -> int:
+        return next(i for i, c in enumerate(runner.commands) if c[: len(prefix)] == list(prefix))
+
+    def closed(self, runner: FakeRunner) -> list[str]:
+        return [c[3] for c in runner.commands if c[:3] == ["gh", "pr", "close"]]
+
+    def test_push_then_create_then_close(self):
+        runner = FakeRunner(failures={("git", "diff"): 1})
+        self.sync(runner)
+        push = self.index(runner, "git", "push")
+        create = self.index(runner, "gh", "pr", "create")
+        listing = self.index(runner, "gh", "pr", "list", "--search")
+        self.assertLess(push, create)
+        self.assertLess(create, listing)
+
+    def test_reuses_open_pr_on_head_and_still_labels(self):
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}])},
+            failures={("git", "diff"): 1},
+        )
+        self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
+        self.assertIsNone(next((c for c in runner.commands if c[:3] == ["gh", "pr", "create"]), None))
+        self.assertIn(["gh", "pr", "edit", "sync-branch", "--add-label", "bug"], runner.commands)
+
+    def test_fork_pr_on_head_is_not_reused(self):
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": True}])},
+            failures={("git", "diff"): 1},
+        )
+        self.sync(runner)
+        self.index(runner, "gh", "pr", "create")
+
+    def test_only_matching_heads_closed(self):
+        listing = prs(
+            ("1", "other-branch"),
+            ("2", "sync-branch-20240101000000"),
+            ("3", "sync-branch-other"),
+            ("4", "sync-branch-20240101000000", True),
+            ("5", "sync-branch-2024"),
+            ("6", "sync-branch"),
+            ("7", "xsync-branch-20240101000000"),
+        )
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--search"): listing}, failures={("git", "diff"): 1}
+        )
+        self.sync(runner)
+        self.assertEqual(self.closed(runner), ["2"])
+
+    def test_timestamped_head_closes_prefix_and_older_but_not_current(self):
+        class CurrentHeadRunner(FakeRunner):
+            def __call__(self, args, cwd=None, capture=False):
+                if list(args[:4]) == ["gh", "pr", "list", "--search"]:
+                    current = next(c[3] for c in self.commands if c[:3] == ["git", "checkout", "-b"])
+                    self.outputs = {
+                        ("gh", "pr", "list", "--search"): prs(
+                            ("1", "sync-branch"), ("2", "sync-branch-20240101000000"), ("3", current)
+                        )
+                    }
+                return super().__call__(args, cwd, capture)
+
+        runner = CurrentHeadRunner(failures={("git", "diff"): 1})
+        self.sync(runner, INPUT_TIMESTAMP_HEAD_BRANCH="true")
+        self.assertEqual(self.closed(runner), ["1", "2"])
+
+    def test_push_failure_creates_and_closes_nothing(self):
+        runner = FakeRunner(failures={("git", "diff"): 1, ("git", "push"): 1})
+        with self.assertRaises(CommandError):
+            self.sync(runner)
+        self.assertEqual(self.closed(runner), [])
+        self.assertFalse(any(c[:3] == ["gh", "pr", "create"] for c in runner.commands))
+
+    def test_create_failure_closes_nothing(self):
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--search"): prs(("2", "sync-branch-20240101000000"))},
+            failures={("git", "diff"): 1, ("gh", "pr", "create"): 1},
+        )
+        with self.assertRaises(CommandError):
+            self.sync(runner)
+        self.assertEqual(self.closed(runner), [])
 
     def test_copy_files_raises_sync_error_when_pattern_matches_nothing(self):
         settings = Settings.from_env(self.env(INPUT_SOURCE_FILES="nothing.txt"))

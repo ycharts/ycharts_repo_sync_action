@@ -1,4 +1,7 @@
+import json
 import os
+import re
+from typing import Any
 
 from repo_sync.commands import CommandError, CommandRunner, Runner
 
@@ -46,7 +49,7 @@ class GitClient:
         self.runner(["git", "commit", "--message", message], cwd=self.cwd)
 
     def push(self, branch: str) -> None:
-        self.runner(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=self.cwd)
+        self.runner(["git", "push", "--force-with-lease", "-u", "origin", f"HEAD:{branch}"], cwd=self.cwd)
 
 
 class GitHubClient:
@@ -60,18 +63,48 @@ class GitHubClient:
         # only on the first request, so the clone fails with a 401 partway through.
         self.runner(["gh", "auth", "setup-git"])
 
-    def list_open_prs(self, title_search: str) -> list[int]:
+    def find_open_pr(self, head: str) -> int | None:
         output = self.runner(
             [
                 "gh", "pr", "list",
-                "--search", f"is:pr is:open {title_search} in:title",
-                "--json", "number",
-                "--jq", ".[].number",
+                "--head", head,
+                "--state", "open",
+                "--json", "number,isCrossRepository",
             ],
             cwd=self.cwd,
             capture=True,
         )
-        return [int(line) for line in output.split() if line.strip()]
+        for pr in self._parse_prs(output):
+            if not pr["isCrossRepository"]:
+                return int(pr["number"])
+        return None
+
+    def list_open_prs(self, prefix: str, current_head: str) -> list[int]:
+        output = self.runner(
+            [
+                "gh", "pr", "list",
+                "--search", f"is:pr is:open {prefix} in:title",
+                "--limit", "100",
+                "--json", "number,headRefName,isCrossRepository",
+            ],
+            cwd=self.cwd,
+            capture=True,
+        )
+        timestamped = re.compile(rf"{re.escape(prefix)}-\d{{14}}")
+        numbers = []
+        for pr in self._parse_prs(output):
+            head = pr["headRefName"]
+            if pr["isCrossRepository"] or head == current_head:
+                continue
+            if head == prefix or timestamped.fullmatch(head):
+                numbers.append(int(pr["number"]))
+        return numbers
+
+    @staticmethod
+    def _parse_prs(output: str) -> list[dict[str, Any]]:
+        if not output.strip():
+            return []
+        return json.loads(output)
 
     def close_pr(self, number: int) -> None:
         self.runner(["gh", "pr", "close", str(number)], cwd=self.cwd)

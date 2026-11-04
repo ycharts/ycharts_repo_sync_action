@@ -137,6 +137,7 @@ class RepoSync:
         for number in github.list_open_prs(self.settings.head_branch_prefix, self.settings.head_branch):
             github.close_pr(number)
 
+        # The number is unset when `gh pr create` printed no PR URL.
         if self.settings.labels and pr.number is None:
             pr.number = github.find_open_pr(self.settings.head_branch)
             if pr.number is None:

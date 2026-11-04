@@ -83,6 +83,8 @@ class RepoSyncTest(FlowTestCase):
         )
 
     def test_unparsed_url_falls_back_to_lookup_for_labels(self):
+        # FakeRunner matches outputs by prefix only, so it can't make the
+        # pre-create `gh pr list --head` find nothing and the later one find the PR.
         class LateListRunner(FakeRunner):
             def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str:
                 listed = sum(1 for c in self.commands if c[:3] == ["gh", "pr", "list"] and "--head" in c)

@@ -113,7 +113,8 @@ class EntrypointTest(FlowTestCase):
         self.assertEqual(code, 0)
         repo_sync.assert_called_once()
         args, kwargs = repo_sync.call_args
-        self.assertEqual(len(args), 1)
+        self.assertEqual(len(args), 2)
+        self.assertIsNone(args[1])
         self.assertEqual(kwargs, {})
         repo_sync.return_value.run.assert_called_once_with()
 

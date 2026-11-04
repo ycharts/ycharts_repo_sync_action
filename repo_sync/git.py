@@ -14,42 +14,44 @@ def require_token() -> None:
 
 
 class GitClient:
-    def __init__(self, runner: Runner | None = None) -> None:
+    def __init__(self, cwd: str | os.PathLike[str], runner: Runner | None = None) -> None:
         require_token()
+        self.cwd = os.fspath(cwd)
         self.runner = runner or CommandRunner()
 
     def configure_user(self, email: str, name: str) -> None:
         self.runner(["git", "config", "--global", "user.email", email])
         self.runner(["git", "config", "--global", "user.name", name])
 
-    def clone(self, url: str, destination: str | os.PathLike[str]) -> None:
-        self.runner(["git", "clone", url, str(destination)])
+    def clone(self, url: str) -> None:
+        self.runner(["git", "clone", url, self.cwd])
 
-    def checkout_new_branch(self, cwd: str, branch: str) -> None:
-        self.runner(["git", "checkout", "-b", branch], cwd=cwd)
+    def checkout_new_branch(self, branch: str) -> None:
+        self.runner(["git", "checkout", "-b", branch], cwd=self.cwd)
 
-    def stage_all(self, cwd: str) -> None:
-        self.runner(["git", "add", "."], cwd=cwd)
+    def stage_all(self) -> None:
+        self.runner(["git", "add", "."], cwd=self.cwd)
 
-    def has_staged_changes(self, cwd: str) -> bool:
+    def has_staged_changes(self) -> bool:
         try:
-            self.runner(["git", "diff", "--cached", "--quiet"], cwd=cwd)
+            self.runner(["git", "diff", "--cached", "--quiet"], cwd=self.cwd)
         except CommandError as exc:
             if exc.returncode == 1:
                 return True
             raise
         return False
 
-    def commit(self, cwd: str, message: str) -> None:
-        self.runner(["git", "commit", "--message", message], cwd=cwd)
+    def commit(self, message: str) -> None:
+        self.runner(["git", "commit", "--message", message], cwd=self.cwd)
 
-    def push(self, cwd: str, branch: str) -> None:
-        self.runner(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd)
+    def push(self, branch: str) -> None:
+        self.runner(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=self.cwd)
 
 
 class GitHubClient:
-    def __init__(self, runner: Runner | None = None) -> None:
+    def __init__(self, cwd: str | os.PathLike[str], runner: Runner | None = None) -> None:
         require_token()
+        self.cwd = os.fspath(cwd)
         self.runner = runner or CommandRunner()
 
     def setup_git_auth(self) -> None:
@@ -57,7 +59,7 @@ class GitHubClient:
         # only on the first request, so the clone fails with a 401 partway through.
         self.runner(["gh", "auth", "setup-git"])
 
-    def list_open_prs(self, cwd: str, title_search: str) -> list[int]:
+    def list_open_prs(self, title_search: str) -> list[int]:
         output = self.runner(
             [
                 "gh", "pr", "list",
@@ -65,28 +67,49 @@ class GitHubClient:
                 "--json", "number",
                 "--jq", ".[].number",
             ],
-            cwd=cwd,
+            cwd=self.cwd,
             capture=True,
         )
         return [int(line) for line in output.split() if line.strip()]
 
-    def close_pr(self, cwd: str, number: int) -> None:
-        self.runner(["gh", "pr", "close", str(number)], cwd=cwd)
+    def close_pr(self, number: int) -> None:
+        self.runner(["gh", "pr", "close", str(number)], cwd=self.cwd)
 
-    def create_pr(
-        self, cwd: str, title: str, body: str, base: str, head: str, reviewers: str = ""
-    ) -> None:
+    def new_pull_request(self) -> "PullRequest":
+        return PullRequest(self)
+
+
+class PullRequest:
+    title: str | None = None
+    body: str | None = None
+    base: str | None = None
+    head: str | None = None
+
+    def __init__(self, github: GitHubClient) -> None:
+        self.github = github
+        self.reviewers = ""
+
+    def create(self) -> None:
+        required = {
+            "title": self.title,
+            "body": self.body,
+            "base": self.base,
+            "head": self.head,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ValueError(f"pull request is missing: {', '.join(missing)}")
         args = [
             "gh", "pr", "create",
-            "--title", title,
-            "--body", body,
-            "--base", base,
-            "--head", head,
+            "--title", str(self.title),
+            "--body", str(self.body),
+            "--base", str(self.base),
+            "--head", str(self.head),
         ]
-        if reviewers:
-            args += ["-r", reviewers]
-        self.runner(args, cwd=cwd)
+        if self.reviewers:
+            args += ["-r", self.reviewers]
+        self.github.runner(args, cwd=self.github.cwd)
 
-    def add_label(self, cwd: str, pr: str, label: str) -> None:
-        # gh pr edit takes a PR number or its head branch; the caller passes the branch.
-        self.runner(["gh", "pr", "edit", pr, "--add-label", label], cwd=cwd)
+    def add_label(self, label: str) -> None:
+        # gh pr edit takes a PR number or its head branch; this passes the branch.
+        self.github.runner(["gh", "pr", "edit", str(self.head), "--add-label", label], cwd=self.github.cwd)

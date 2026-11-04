@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from typing import TypedDict
 
 from repo_sync.commands import CommandError, Runner
-from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync
 
@@ -88,5 +87,5 @@ class FlowTestCase(unittest.TestCase):
         clone = os.path.join(self.root, "clone")
         os.makedirs(clone, exist_ok=True)
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            RepoSync(settings, GitClient(runner), GitHubClient(runner)).run(clone_dir=clone)
+            RepoSync(settings, runner).run(clone_dir=clone)
         return clone, out.getvalue()

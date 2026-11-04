@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from repo_sync.commands import CommandError
+from repo_sync.commands import CommandError, Runner
 from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
 
@@ -14,15 +14,9 @@ class SyncError(Exception):
 
 
 class RepoSync:
-    def __init__(
-        self,
-        settings: Settings,
-        git: GitClient | None = None,
-        github: GitHubClient | None = None,
-    ) -> None:
+    def __init__(self, settings: Settings, runner: Runner | None = None) -> None:
         self.settings = settings
-        self.git = git or GitClient()
-        self.github = github or GitHubClient()
+        self.runner = runner
 
     def copy_files(self, clone_dir: str | Path) -> None:
         s = self.settings
@@ -97,48 +91,45 @@ class RepoSync:
             return self._run(temp)
 
     def _run(self, clone_dir: str) -> None:
+        git = GitClient(clone_dir, self.runner)
+        github = GitHubClient(clone_dir, self.runner)
+
         print("Setting git variables", flush=True)
-        self.git.configure_user(self.settings.user_email, self.settings.user_name)
-        self.github.setup_git_auth()
+        git.configure_user(self.settings.user_email, self.settings.user_name)
+        github.setup_git_auth()
 
         print("Cloning destination git repository", flush=True)
-        self.git.clone(
-            f"https://github.com/{self.settings.destination_repo}.git", clone_dir
-        )
+        git.clone(f"https://github.com/{self.settings.destination_repo}.git")
 
         print("Copying contents to git repo", flush=True)
         self.copy_files(clone_dir)
-        self.git.checkout_new_branch(clone_dir, self.settings.head_branch)
+        git.checkout_new_branch(self.settings.head_branch)
 
         print("Adding git commit", flush=True)
-        self.git.stage_all(clone_dir)
-        if not self.git.has_staged_changes(clone_dir):
+        git.stage_all()
+        if not git.has_staged_changes():
             print("No changes detected", flush=True)
             return
-        self.git.commit(
-            clone_dir,
+        git.commit(
             f"Update from https://github.com/{self.settings.github_repository}"
             f"/commit/{self.settings.github_sha}",
         )
 
         print("Closing existing PRs", flush=True)
-        for number in self.github.list_open_prs(
-            clone_dir, self.settings.head_branch_prefix
-        ):
-            self.github.close_pr(clone_dir, number)
+        for number in github.list_open_prs(self.settings.head_branch_prefix):
+            github.close_pr(number)
 
         print("Pushing git commit", flush=True)
-        self.git.push(clone_dir, self.settings.head_branch)
+        git.push(self.settings.head_branch)
 
         print("Creating a pull request", flush=True)
-        self.github.create_pr(
-            clone_dir,
-            self.settings.head_branch,
-            self.settings.head_branch,
-            self.settings.base_branch,
-            self.settings.head_branch,
-            self.settings.reviewers,
-        )
+        pr = github.new_pull_request()
+        pr.title = self.settings.head_branch
+        pr.body = self.settings.head_branch
+        pr.base = self.settings.base_branch
+        pr.head = self.settings.head_branch
+        pr.reviewers = self.settings.reviewers
+        pr.create()
 
         if self.settings.labels:
             print("Adding labels to the pull request", flush=True)
@@ -146,7 +137,7 @@ class RepoSync:
         # would fail `gh pr create --label` outright.
         for label in self.settings.labels:
             try:
-                self.github.add_label(clone_dir, self.settings.head_branch, label)
+                pr.add_label(label)
             except CommandError:
                 print(
                     f"::warning::could not add label '{label}' to the pull request, skipping",

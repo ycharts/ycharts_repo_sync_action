@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from repo_sync.commands import CommandError, Runner
-from repo_sync.git import GitClient, GitHubClient, MissingTokenError
+from repo_sync.git import MissingTokenError
 from repo_sync.settings import ConfigError, Settings
 from repo_sync.sync import RepoSync, SyncError
 
@@ -26,11 +26,7 @@ def main(
         os.environ["GITHUB_TOKEN"] = env["API_TOKEN_GITHUB"]
     try:
         settings = Settings.from_env(env, now=clock)
-        if runner is None:
-            sync = RepoSync(settings)
-        else:
-            sync = RepoSync(settings, GitClient(runner), GitHubClient(runner))
-        sync.run()
+        RepoSync(settings, runner).run()
     except ConfigError as exc:
         for message in exc.messages:
             print(f"::error::{escape(message)}", flush=True)

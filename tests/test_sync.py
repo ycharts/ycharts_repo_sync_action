@@ -3,7 +3,6 @@ import tempfile
 import unittest
 
 from repo_sync.commands import CommandError
-from repo_sync.git import GitClient, GitHubClient
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync, SyncError
 from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
@@ -83,7 +82,7 @@ class RepoSyncTest(FlowTestCase):
     def test_copy_files_raises_sync_error_when_pattern_matches_nothing(self):
         settings = Settings.from_env(self.env(INPUT_SOURCE_FILES="nothing.txt"))
         with self.assertRaises(SyncError) as ctx:
-            RepoSync(settings, GitClient(FakeRunner()), GitHubClient(FakeRunner())).copy_files(self.root)
+            RepoSync(settings).copy_files(self.root)
         self.assertIn("matched nothing", str(ctx.exception))
 
 
@@ -111,7 +110,7 @@ class CopyFilesTest(unittest.TestCase):
         settings = Settings.from_env(
             base_env(INPUT_SOURCE_FOLDER=self.src, INPUT_SOURCE_FILES=files, INPUT_DESTINATION_FOLDER=dest)
         )
-        RepoSync(settings, GitClient(FakeRunner()), GitHubClient(FakeRunner())).copy_files(self.clone)
+        RepoSync(settings).copy_files(self.clone)
 
     def test_single_file(self):
         self.write(os.path.join(self.src, "a.txt"), "hello")

@@ -74,12 +74,16 @@ class GitHubClient:
             cwd=self.cwd,
             capture=True,
         )
+        # --head also matches fork PRs whose branch has the same name.
         for pr in self._parse_prs(output):
             if not pr["isCrossRepository"]:
                 return int(pr["number"])
         return None
 
     def list_open_prs(self, prefix: str, current_head: str) -> list[int]:
+        # The title search only narrows candidates; titles can be edited,
+        # so the head branch decides which PRs this action opened.
+        # gh returns 30 results unless given --limit.
         output = self.runner(
             [
                 "gh", "pr", "list",

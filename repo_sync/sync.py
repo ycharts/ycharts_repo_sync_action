@@ -130,6 +130,7 @@ class RepoSync:
         else:
             print("Pull request already open for this branch, reusing it", flush=True)
 
+        # Only after the push and PR succeed, so a failure never leaves no PR open.
         print("Closing older PRs", flush=True)
         for number in github.list_open_prs(self.settings.head_branch_prefix, self.settings.head_branch):
             github.close_pr(number)

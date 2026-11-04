@@ -97,17 +97,18 @@ class RepoSync:
             return self._run(temp)
 
     def _run(self, clone_dir: str) -> None:
-        s = self.settings
         print("Setting git variables", flush=True)
-        self.git.configure_user(s.user_email, s.user_name)
+        self.git.configure_user(self.settings.user_email, self.settings.user_name)
         self.github.setup_git_auth()
 
         print("Cloning destination git repository", flush=True)
-        self.git.clone(f"https://github.com/{s.destination_repo}.git", clone_dir)
+        self.git.clone(
+            f"https://github.com/{self.settings.destination_repo}.git", clone_dir
+        )
 
         print("Copying contents to git repo", flush=True)
         self.copy_files(clone_dir)
-        self.git.checkout_new_branch(clone_dir, s.head_branch)
+        self.git.checkout_new_branch(clone_dir, self.settings.head_branch)
 
         print("Adding git commit", flush=True)
         self.git.stage_all(clone_dir)
@@ -116,28 +117,36 @@ class RepoSync:
             return
         self.git.commit(
             clone_dir,
-            f"Update from https://github.com/{s.github_repository}/commit/{s.github_sha}",
+            f"Update from https://github.com/{self.settings.github_repository}"
+            f"/commit/{self.settings.github_sha}",
         )
 
         print("Closing existing PRs", flush=True)
-        for number in self.github.list_open_prs(clone_dir, s.head_branch_prefix):
+        for number in self.github.list_open_prs(
+            clone_dir, self.settings.head_branch_prefix
+        ):
             self.github.close_pr(clone_dir, number)
 
         print("Pushing git commit", flush=True)
-        self.git.push(clone_dir, s.head_branch)
+        self.git.push(clone_dir, self.settings.head_branch)
 
         print("Creating a pull request", flush=True)
         self.github.create_pr(
-            clone_dir, s.head_branch, s.head_branch, s.base_branch, s.head_branch, s.reviewers
+            clone_dir,
+            self.settings.head_branch,
+            self.settings.head_branch,
+            self.settings.base_branch,
+            self.settings.head_branch,
+            self.settings.reviewers,
         )
 
-        if s.labels:
+        if self.settings.labels:
             print("Adding labels to the pull request", flush=True)
         # One at a time after creation: a label missing from the destination repo
         # would fail `gh pr create --label` outright.
-        for label in s.labels:
+        for label in self.settings.labels:
             try:
-                self.github.add_label(clone_dir, s.head_branch, label)
+                self.github.add_label(clone_dir, self.settings.head_branch, label)
             except CommandError:
                 print(
                     f"::warning::could not add label '{label}' to the pull request, skipping",

@@ -70,7 +70,7 @@ def patch_github_token(test: unittest.TestCase) -> None:
 
 
 class FlowTestCase(unittest.TestCase):
-    def setUp(self) -> None:
+    def setUp(self):
         patch_github_token(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

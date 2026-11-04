@@ -8,12 +8,12 @@ from tests.helpers import FakeRunner, patch_github_token
 
 
 class GitClientTest(unittest.TestCase):
-    def setUp(self) -> None:
+    def setUp(self):
         patch_github_token(self)
         self.runner = FakeRunner()
         self.git = GitClient(self.runner)
 
-    def test_commands(self) -> None:
+    def test_commands(self):
         self.git.configure_user("e@x.com", "name")
         self.git.clone("https://github.com/o/r.git", "/tmp/c")
         self.git.checkout_new_branch("/tmp/c", "br")
@@ -33,21 +33,21 @@ class GitClientTest(unittest.TestCase):
             ],
         )
 
-    def test_staged_changes_detected_on_exit_1(self) -> None:
+    def test_staged_changes_detected_on_exit_1(self):
         git = GitClient(FakeRunner(failures={("git", "diff"): 1}))
         self.assertTrue(git.has_staged_changes("/c"))
 
-    def test_no_staged_changes_on_exit_0(self) -> None:
+    def test_no_staged_changes_on_exit_0(self):
         self.assertFalse(self.git.has_staged_changes("/c"))
         self.assertEqual(self.runner.calls[0]["args"], ["git", "diff", "--cached", "--quiet"])
         self.assertEqual(self.runner.calls[0]["cwd"], "/c")
 
-    def test_diff_other_failure_propagates(self) -> None:
+    def test_diff_other_failure_propagates(self):
         git = GitClient(FakeRunner(failures={("git", "diff"): 128}))
         with self.assertRaises(CommandError):
             git.has_staged_changes("/c")
 
-    def test_requires_github_token(self) -> None:
+    def test_requires_github_token(self):
         for value in (None, ""):
             with self.subTest(value=value):
                 env = {} if value is None else {"GITHUB_TOKEN": value}
@@ -60,15 +60,15 @@ class GitClientTest(unittest.TestCase):
 
 
 class GitHubClientTest(unittest.TestCase):
-    def setUp(self) -> None:
+    def setUp(self):
         patch_github_token(self)
 
-    def test_setup(self) -> None:
+    def test_setup(self):
         runner = FakeRunner()
         GitHubClient(runner).setup_git_auth()
         self.assertEqual(runner.commands, [["gh", "auth", "setup-git"]])
 
-    def test_list_prs_command_and_parsing(self) -> None:
+    def test_list_prs_command_and_parsing(self):
         cases = {"": [], "7\n": [7], "3\n12\n5\n": [3, 12, 5]}
         for output, expected in cases.items():
             runner = FakeRunner(outputs={("gh", "pr", "list"): output})
@@ -88,7 +88,7 @@ class GitHubClientTest(unittest.TestCase):
                     },
                 )
 
-    def test_close_create_label(self) -> None:
+    def test_close_create_label(self):
         runner = FakeRunner()
         gh = GitHubClient(runner)
         gh.close_pr("/c", 4)
@@ -106,7 +106,7 @@ class GitHubClientTest(unittest.TestCase):
         )
         self.assertTrue(all(call["cwd"] == "/c" for call in runner.calls))
 
-    def test_requires_github_token(self) -> None:
+    def test_requires_github_token(self):
         for value in (None, ""):
             with self.subTest(value=value):
                 env = {} if value is None else {"GITHUB_TOKEN": value}

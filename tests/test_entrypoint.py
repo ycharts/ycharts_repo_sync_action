@@ -17,53 +17,53 @@ class EntrypointTest(FlowTestCase):
             code = entrypoint.main(env=env, runner=runner)
         return code, out.getvalue()
 
-    def test_success(self) -> None:
+    def test_success(self):
         code, _ = self.main(FakeRunner(failures={("git", "diff"): 1}), self.env())
         self.assertEqual(code, 0)
 
-    def test_no_changes_success(self) -> None:
+    def test_no_changes_success(self):
         code, _ = self.main(FakeRunner(), self.env())
         self.assertEqual(code, 0)
 
-    def test_validation_error_runs_nothing(self) -> None:
+    def test_validation_error_runs_nothing(self):
         runner = FakeRunner()
         code, out = self.main(runner, self.env(INPUT_USER_NAME=""))
         self.assertNotEqual(code, 0)
         self.assertIn("::error::", out)
         self.assertEqual(runner.calls, [])
 
-    def test_master_rejected(self) -> None:
+    def test_master_rejected(self):
         runner = FakeRunner()
         code, _ = self.main(runner, self.env(INPUT_DESTINATION_HEAD_BRANCH="master"))
         self.assertNotEqual(code, 0)
         self.assertEqual(runner.calls, [])
 
-    def test_command_failure(self) -> None:
+    def test_command_failure(self):
         code, out = self.main(FakeRunner(failures={("git", "clone"): 128}), self.env())
         self.assertEqual(code, 128)
         self.assertIn("::error::", out)
         self.assertIn("git", out)
         self.assertNotIn("secret-token", out)
 
-    def test_no_match_failure(self) -> None:
+    def test_no_match_failure(self):
         code, out = self.main(FakeRunner(), self.env(INPUT_SOURCE_FILES="nothing.txt"))
         self.assertNotEqual(code, 0)
         self.assertIn("::error::", out)
 
-    def test_missing_source_folder_failure(self) -> None:
+    def test_missing_source_folder_failure(self):
         code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=os.path.join(self.root, "nope")))
         self.assertEqual(code, 1)
         self.assertIn("::error::", out)
         self.assertIn("is not a directory", out)
 
-    def test_source_folder_is_file_failure(self) -> None:
+    def test_source_folder_is_file_failure(self):
         with tempfile.NamedTemporaryFile() as f:
             code, out = self.main(FakeRunner(), base_env(INPUT_SOURCE_FOLDER=f.name))
         self.assertEqual(code, 1)
         self.assertIn("::error::", out)
         self.assertIn("is not a directory", out)
 
-    def test_copy_os_error_failure(self) -> None:
+    def test_copy_os_error_failure(self):
         # main() clones into its own temp dir, so the blocking file
         # can only be created once the clone command names that dir.
         class BlockingRunner(FakeRunner):
@@ -80,18 +80,18 @@ class EntrypointTest(FlowTestCase):
         self.assertIn("blocker", out)
         self.assertNotIn(["git", "checkout", "-b", "sync-branch"], runner.commands)
 
-    def test_exports_api_token_as_github_token(self) -> None:
+    def test_exports_api_token_as_github_token(self):
         os.environ.pop("GITHUB_TOKEN")
         code, _ = self.main(FakeRunner(), self.env(API_TOKEN_GITHUB="exported"))
         self.assertEqual(code, 0)
         self.assertEqual(os.environ["GITHUB_TOKEN"], "exported")
 
-    def test_empty_api_token_keeps_existing_github_token(self) -> None:
+    def test_empty_api_token_keeps_existing_github_token(self):
         code, _ = self.main(FakeRunner(), self.env(API_TOKEN_GITHUB=""))
         self.assertEqual(code, 0)
         self.assertEqual(os.environ["GITHUB_TOKEN"], "test-token")
 
-    def test_missing_token_fails_before_any_command(self) -> None:
+    def test_missing_token_fails_before_any_command(self):
         os.environ.pop("GITHUB_TOKEN")
         env = self.env()
         del env["API_TOKEN_GITHUB"]
@@ -102,12 +102,12 @@ class EntrypointTest(FlowTestCase):
         self.assertIn("API_TOKEN_GITHUB", out)
         self.assertEqual(runner.calls, [])
 
-    def test_token_value_never_printed(self) -> None:
+    def test_token_value_never_printed(self):
         code, out = self.main(FakeRunner(failures={("git", "clone"): 128}), self.env(API_TOKEN_GITHUB="s3cr3t"))
         self.assertEqual(code, 128)
         self.assertNotIn("s3cr3t", out)
 
-    def test_no_runner_builds_repo_sync_from_settings_only(self) -> None:
+    def test_no_runner_builds_repo_sync_from_settings_only(self):
         with mock.patch("entrypoint.RepoSync") as repo_sync:
             code = entrypoint.main(env=self.env())
         self.assertEqual(code, 0)

@@ -5,6 +5,8 @@ from typing import Protocol
 
 
 class CommandError(Exception):
+    """A command exited non-zero, or its binary was missing (exit code 127)."""
+
     def __init__(self, command: Sequence[str], returncode: int) -> None:
         self.command = list(command)
         self.returncode = returncode
@@ -12,6 +14,13 @@ class CommandError(Exception):
 
 
 class Runner(Protocol):
+    """Runs a command, raising CommandError if it fails.
+
+    The arguments go straight to the program, never through a shell.
+    With capture set, returns the command's stdout;
+    otherwise the output goes to the log and the call returns "".
+    """
+
     def __call__(self, args: Sequence[str], cwd: str | None = None, capture: bool = False) -> str: ...
 
 

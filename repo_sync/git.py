@@ -131,6 +131,8 @@ class GitHubClient:
         ]
         if pr.reviewers:
             args += ["-r", pr.reviewers]
+        # gh prints the new PR's URL. Without one, number stays None,
+        # which only matters if add_label is called later.
         output = self.runner(args, cwd=self.cwd, capture=True)
         match = re.search(r"/pull/(\d+)\s*$", output)
         pr.number = int(match.group(1)) if match else None

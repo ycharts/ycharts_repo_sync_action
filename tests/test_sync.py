@@ -404,6 +404,29 @@ class DescriptionTest(FlowTestCase):
         prompt = self.requests[0]["messages"][0]["content"]
         self.assertIn("Pull request #5: sync-branch: Old", prompt)
 
+    def test_reused_pr_keeps_its_title_without_a_generated_one(self):
+        runner = self.runner(
+            {
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "Hand edited", "Current body")),
+            }
+        )
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertEqual(args[args.index("--title") + 1], "Hand edited")
+        self.assertIn(SOURCE_LINE, body)
+
+    def test_reused_pr_keeps_its_title_when_generation_fails(self):
+        runner = FakeRunner(
+            outputs={
+                **CREATED,
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "Hand edited", "Current body")),
+            },
+            failures={("git", "diff"): 1, ("gh", "api"): 1},
+        )
+        [(args, _)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[args.index("--title") + 1], "Hand edited")
+
     def test_label_mode_closes_label_matches(self):
         listing = json.dumps([pr_json(7, "unrelated-branch", "t7", "b7")])
         runner = self.runner({("gh", "pr", "list", "--state"): listing})
@@ -633,8 +656,18 @@ class CopyFilesTest(unittest.TestCase):
     def test_paths_are_relative_to_the_checkout_root(self):
         self.write(os.path.join(self.src, "docs", "a.txt"))
         os.makedirs(os.path.join(self.root, ".git"))
-        with mock.patch("pathlib.Path.cwd", return_value=Path(self.root)):
-            self.assertEqual(self.copy("docs"), ["src/docs/a.txt"])
+        self.assertEqual(self.copy("docs"), ["src/docs/a.txt"])
+
+    def test_nested_checkout_ignores_cwd_without_git(self):
+        app = os.path.join(self.root, "workspace", "app")
+        self.write(os.path.join(app, "docs", "a.txt"))
+        os.makedirs(os.path.join(app, ".git"))
+        settings = Settings.from_env(
+            base_env(INPUT_SOURCE_FOLDER=os.path.join(app, "docs"), INPUT_SOURCE_FILES="a.txt")
+        )
+        with mock.patch("pathlib.Path.cwd", return_value=Path(self.root, "workspace")):
+            copied = RepoSync(settings).copy_files(self.clone)
+        self.assertEqual(copied, ["docs/a.txt"])
 
     def test_returned_paths_include_symlinks_in_directory(self):
         self.write(os.path.join(self.src, "d", "a.txt"))

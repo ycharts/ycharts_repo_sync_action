@@ -30,7 +30,7 @@ This GitHub Action copies a folder from the current repository to a location in 
             pull_request_reviewers: 'reviewers'
             pull_request_labels: 'label1,label2'
             generate_pr_description: true
-            pr_description_exclude: 'dist/*,*.snap'
+            pr_description_exclude: 'source-folder/dist/*,*.snap'
 
 ## Variables
 * source_folder: The folder, relative to the workspace, that `source_files` are resolved against.
@@ -45,7 +45,7 @@ This GitHub Action copies a folder from the current repository to a location in 
 * pull_request_labels: [optional] Labels to add to the pull request, comma-separated (just like 'label1,label2,...'). Labels that don't exist in the destination repository are skipped with a warning. When set, these labels also decide which existing pull requests the action closes (see Behavior Notes).
 * generate_pr_description: [optional] Set to `true` to generate the pull request title and description with the Claude API. Default is `false`. See Pull request description below.
 * anthropic_model: [optional] The Claude model used when `generate_pr_description` is `true`. Default is `claude-opus-5-5`.
-* pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Each glob is matched against the whole file path with `fnmatch` rules, so `*` also matches across `/`: `*.snap` matches `.snap` files at any depth and `dist/*` covers everything under `dist`. Avoid `**/*.snap`, which does not match a root-level `a.snap`. Excluded files still appear in the diff stat and as a header line without a patch.
+* pr_description_exclude: [optional] Comma-separated globs of files whose patches are left out of what is sent to Claude, added to the built-in exclusions. Whitespace around each glob is trimmed and empty entries are skipped. Each glob is matched against the whole file path relative to the source repository root (so `source_folder` is part of the path) with `fnmatch` rules, so `*` also matches across `/`: `*.snap` matches `.snap` files at any depth and `source-folder/dist/*` covers everything under `dist` in a `source_folder` of `source-folder`. Avoid `**/*.snap`, which does not match a root-level `a.snap`. Excluded files still appear in the diff stat and as a header line without a patch.
 
 ## ENV
 * API_TOKEN_GITHUB: Required; the action fails if it is missing. You must create a personal access token in you account. When `generate_pr_description` is `true`, the token must also be able to read the source repository, because the action reads the source push through the GitHub compare API. Follow the link:
@@ -74,9 +74,9 @@ Either search looks at up to 100 pull requests. Pull requests from forks and the
 If a pull request is already open for the current head branch, the action reuses it: it edits the title and body instead of creating a new one.
 
 ### Pull request description
-By default the pull request title is `destination_head_branch` and the body is the previous pull request's body (see below), so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
+By default the pull request title is the head branch (`destination_head_branch`, with the timestamp suffix when `timestamp_head_branch` is true) and the body is the previous pull request's body (see below), so reviewers don't lose earlier notes. With `generate_pr_description: true`, the action asks Claude for the title and body instead:
 
-* The title is `<destination_head_branch>: <generated title>`. It summarizes the earlier pull requests plus the current change.
+* The title is `<head branch>: <generated title>`, where the head branch includes the timestamp suffix when `timestamp_head_branch` is true. It summarizes the earlier pull requests plus the current change.
 * The body is the previous body, then a `---` line, then a generated section that describes only the current changes, then a `Source commit:` link. If the latest push changed none of the synced files, the generated section is one line saying so. If there is no previous body, the body is the generated section and the link.
 
 The action reads the source push from the GitHub API, not from the local checkout. The source repository is the repository the workflow runs in (`GITHUB_REPOSITORY` at `GITHUB_SHA`), and synced paths are taken relative to its root. The push is `compare/{before}...{sha}`, where `before` comes from the push event. When the push created the branch, was forced, or the event payload is missing, it is the single pushed commit. The compare API returns at most 300 files, so a push with 300 or more files is described from what it returns. The diff is then marked partial and the "changed none of the synced files" notice is not sent.
@@ -90,7 +90,9 @@ What is sent to Anthropic:
 
 The built-in exclusions are `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, and `*.map`. The lock files match at any depth. When the patches are larger than 200 KB, the generated content ends with a note such as `_Generated from a partial diff (first 200 KB of 437 KB)._`.
 
-If generation fails (missing `ANTHROPIC_API_KEY`, a failed GitHub API call, an Anthropic error, unparseable output), the action logs a warning and uses the default title with the non-generated body: the previous body, a `---` line, and the `Source commit:` link. With no previous body, the body is `destination_head_branch`.
+If generation fails (missing `ANTHROPIC_API_KEY`, a failed GitHub API call, an Anthropic error, unparseable output), the action logs a warning and uses the default title with the non-generated body: the previous body, a `---` line, and the `Source commit:` link. With no previous body, the body is the head branch (with the timestamp suffix when `timestamp_head_branch` is true).
+
+If an open pull request on the head branch is reused and no new title is generated (generation is off or failed), it keeps its current title. Its body is still updated with the appended section.
 
 ### Previous body
 The previous body comes from the newest earlier pull request with a real description. A body that is empty or just the branch name doesn't count. The reused pull request counts as the newest, so its body keeps accumulating on each push. This applies whether or not generation succeeded.

@@ -155,10 +155,24 @@ class GenerateDescriptionTest(unittest.TestCase):
         self.assertNotIn(KEY, str(ctx.exception))
 
     def test_generic_failure_hides_key(self):
-        for error in (TimeoutError(f"timed out {KEY}"), urllib.error.URLError(KEY)):
+        for error in (TimeoutError("timed out"), urllib.error.URLError("refused"), ValueError(KEY)):
             with self.assertRaises(DescribeError) as ctx:
                 run(FakePost(error=error))
             self.assertNotIn(KEY, str(ctx.exception))
+
+    def test_url_error_reports_reason_capped(self):
+        with self.assertRaises(DescribeError) as ctx:
+            run(FakePost(error=urllib.error.URLError("name resolution failed")))
+        self.assertIn("URLError: name resolution failed", str(ctx.exception))
+        with self.assertRaises(DescribeError) as ctx:
+            run(FakePost(error=ConnectionResetError("reset by peer")))
+        self.assertIn("ConnectionResetError: reset by peer", str(ctx.exception))
+        with self.assertRaises(DescribeError) as ctx:
+            run(FakePost(error=urllib.error.URLError("x" * 1000)))
+        self.assertLess(len(str(ctx.exception)), 400)
+        with self.assertRaises(DescribeError) as ctx:
+            run(FakePost(error=ValueError("anything")))
+        self.assertEqual(str(ctx.exception), "API request failed: ValueError")
 
     def test_bad_responses(self):
         cases = [

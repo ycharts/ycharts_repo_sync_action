@@ -3,24 +3,24 @@ import os
 import tempfile
 import unittest
 
-from repo_sync.source_diff import SourceDiffError, fetch_source_diff
+from repo_sync.source_diff import SourceDiff, SourceDiffError, fetch_source_diff
 
 BEFORE = "a" * 40
 SHA = "b" * 40
 
 
-def file_entry(name, patch="@@ patch", status="modified"):
+def file_entry(name: str, patch: str = "@@ patch", status: str = "modified") -> dict[str, object]:
     return {"filename": name, "status": status, "additions": 1, "deletions": 2, "patch": patch}
 
 
 class FakeApi:
-    def __init__(self, payload=None, error=None, raw=None):
+    def __init__(self, payload: dict | None = None, error: Exception | None = None, raw: str | None = None) -> None:
         self.payload = payload if payload is not None else {"files": []}
         self.error = error
         self.raw = raw
         self.endpoints = []
 
-    def __call__(self, endpoint):
+    def __call__(self, endpoint: str) -> str:
         self.endpoints.append(endpoint)
         if self.error:
             raise self.error
@@ -34,13 +34,19 @@ class SourceDiffTest(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
 
-    def event(self, body):
+    def event(self, body: str | dict) -> str:
         path = os.path.join(self.dir.name, "event.json")
         with open(path, "w") as handle:
             handle.write(body if isinstance(body, str) else json.dumps(body))
         return path
 
-    def fetch(self, api, event_path=None, synced=("a.py",), excludes=()):
+    def fetch(
+        self,
+        api: FakeApi,
+        event_path: str | None = None,
+        synced: tuple[str, ...] = ("a.py",),
+        excludes: tuple[str, ...] = (),
+    ) -> SourceDiff:
         return fetch_source_diff(api, "o/r", SHA, event_path, set(synced), list(excludes))
 
     def test_compare_when_before_valid(self):

@@ -89,12 +89,9 @@ class RepoSync:
         # Copied paths must match the file names GitHub reports for the source push,
         # which are relative to the repository root.
         # Walks up for .git rather than running git, so copying makes no runner calls.
-        cwd = Path.cwd().resolve()
-        for candidate in (cwd, *cwd.parents):
+        for candidate in (source_root, *source_root.parents):
             if (candidate / ".git").exists():
-                if source_root.is_relative_to(candidate):
-                    return candidate
-                break
+                return candidate
         return source_root
 
     @staticmethod
@@ -184,8 +181,11 @@ class RepoSync:
         # The open PR on this head is the newest earlier PR, so its body keeps accumulating.
         # list_previous_prs excludes the current head, so it is never closed below.
         described = list(previous)
+        existing_title: str | None = None
         if existing is not None:
-            described.insert(0, github.get_pr(existing))
+            existing_pr = github.get_pr(existing)
+            existing_title = existing_pr.title
+            described.insert(0, existing_pr)
         described = described[:MAX_PREVIOUS_PRS]
 
         section = (
@@ -220,7 +220,8 @@ class RepoSync:
         else:
             pr.number = existing
             print("Pull request already open for this branch, reusing it", flush=True)
-            github.edit_pr(existing, pr.title, pr.body)
+            keep_title = generated_title is None and existing_title is not None
+            github.edit_pr(existing, existing_title if keep_title else pr.title, pr.body)
 
         # Only after the push and PR succeed, so a failure never leaves no PR open.
         print("Closing older PRs", flush=True)

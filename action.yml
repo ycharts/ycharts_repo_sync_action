@@ -45,7 +45,7 @@ inputs:
     required: false
     default: "claude-opus-5-5"
   pr_description_exclude:
-    description: 'Comma-separated globs of files whose patches are left out of the diff sent to Claude, added to built-in exclusions. Excluded files still appear in the diff stat'
+    description: 'Comma-separated globs of files whose patches are left out of the diff sent to Claude, matched against paths relative to the source repository root, added to built-in exclusions. Excluded files still appear in the diff stat'
     required: false
 runs:
   using: 'docker'

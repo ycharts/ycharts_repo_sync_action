@@ -197,8 +197,14 @@ def generate_description(
     except urllib.error.HTTPError as error:
         raise DescribeError(f"API returned HTTP {error.code}: {_error_message(error)}") from None
     except Exception as error:
-        # Type name only: the error text could echo the API key.
-        raise DescribeError(f"API request failed: {type(error).__name__}") from None
+        # The key is only sent in a header, so these messages can't contain it.
+        if isinstance(error, urllib.error.URLError):
+            detail = f": {error.reason}"[:300]
+        elif isinstance(error, OSError):
+            detail = f": {error}"[:300]
+        else:
+            detail = ""
+        raise DescribeError(f"API request failed: {type(error).__name__}{detail}") from None
 
     result = _extract_result(response_body)
     title_value = result.get("title")

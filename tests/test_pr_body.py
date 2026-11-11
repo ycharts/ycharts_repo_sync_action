@@ -4,7 +4,7 @@ from repo_sync.pr_body import MAX_BODY_BYTES, build_body, build_title
 from repo_sync.previous_prs import PreviousPr
 
 
-def pr(number, body, head_branch="sync/x"):
+def pr(number: int, body: str, head_branch: str = "sync/x") -> PreviousPr:
     return PreviousPr(
         number=number,
         title=f"t{number}",

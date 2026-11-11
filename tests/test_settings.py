@@ -71,6 +71,41 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(base_env(INPUT_PULL_REQUEST_LABELS=" a , ,b,, "))
         self.assertEqual(s.labels, ["a", "b"])
 
+    def test_pr_description_defaults(self):
+        s = Settings.from_env(base_env())
+        self.assertFalse(s.generate_pr_description)
+        self.assertEqual(s.anthropic_model, "claude-opus-5-5")
+        self.assertEqual(s.pr_description_exclude, [])
+        self.assertIsNone(s.anthropic_api_key)
+        self.assertIsNone(s.github_event_path)
+
+    def test_generate_pr_description_parsing(self):
+        for value, expected in (("true", True), ("TRUE", True), ("false", False), ("", False), ("yes", False)):
+            with self.subTest(value=value):
+                s = Settings.from_env(base_env(INPUT_GENERATE_PR_DESCRIPTION=value))
+                self.assertEqual(s.generate_pr_description, expected)
+
+    def test_anthropic_model_override(self):
+        s = Settings.from_env(base_env(INPUT_ANTHROPIC_MODEL=" claude-x "))
+        self.assertEqual(s.anthropic_model, "claude-x")
+
+    def test_pr_description_exclude_trimmed(self):
+        s = Settings.from_env(base_env(INPUT_PR_DESCRIPTION_EXCLUDE=" *.lock , ,docs/**,, "))
+        self.assertEqual(s.pr_description_exclude, ["*.lock", "docs/**"])
+
+    def test_api_key_and_event_path(self):
+        s = Settings.from_env(
+            base_env(ANTHROPIC_API_KEY="sk-secret", GITHUB_EVENT_PATH="/tmp/event.json")
+        )
+        self.assertEqual(s.anthropic_api_key, "sk-secret")
+        self.assertEqual(s.github_event_path, "/tmp/event.json")
+        self.assertNotIn("sk-secret", repr(s))
+
+    def test_blank_api_key_is_none(self):
+        s = Settings.from_env(base_env(ANTHROPIC_API_KEY="  ", GITHUB_EVENT_PATH=""))
+        self.assertIsNone(s.anthropic_api_key)
+        self.assertIsNone(s.github_event_path)
+
 
 if __name__ == "__main__":
     unittest.main()

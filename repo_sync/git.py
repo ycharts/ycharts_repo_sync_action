@@ -181,6 +181,8 @@ class GitHubClient:
         else:
             endpoint = f"repos/{repository}/commits/{sha}"
         output = self.runner(["gh", "api", endpoint], cwd=self.cwd, capture=True)
+        # Fixed messages: the caller prints them in a ::warning::,
+        # so they must not quote the response.
         try:
             data = json.loads(output)
         except ValueError as error:

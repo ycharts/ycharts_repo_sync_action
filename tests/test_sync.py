@@ -463,10 +463,6 @@ class CopyFilesTest(unittest.TestCase):
         with self.assertRaises(SyncError):
             self.copy("d")
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_returns_files_relative_to_source_root_outside_a_repository(self):
         self.write(os.path.join(self.src, "a.txt"))
         self.write(os.path.join(self.src, "d", "b.txt"))
@@ -478,3 +474,12 @@ if __name__ == "__main__":
         os.makedirs(os.path.join(self.root, ".git"))
         with mock.patch("pathlib.Path.cwd", return_value=Path(self.root)):
             self.assertEqual(self.copy("docs"), ["src/docs/a.txt"])
+
+    def test_returned_paths_include_symlinks_in_directory(self):
+        self.write(os.path.join(self.src, "d", "a.txt"))
+        os.symlink("a.txt", os.path.join(self.src, "d", "link.txt"))
+        self.assertEqual(self.copy("d"), ["d/a.txt", "d/link.txt"])
+
+
+if __name__ == "__main__":
+    unittest.main()

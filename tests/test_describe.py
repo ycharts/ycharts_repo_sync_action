@@ -10,7 +10,7 @@ from repo_sync.describe import (
     MAX_PREVIOUS_PRS_BYTES,
     MAX_STAT_BYTES,
     DescribeError,
-    generate_description,
+    PrDescriber,
 )
 from repo_sync.git import PreviousPr
 from repo_sync.source_diff import SourceDiff
@@ -55,9 +55,11 @@ class FakePost:
 
 
 def run(post, **overrides):
-    kwargs = dict(api_key=KEY, model="claude-opus-5-5", previous_prs=[], source_diff=make_diff(), diff_stat=" a.txt | 1 +", http_post=post)
+    kwargs = dict(previous_prs=[], source_diff=make_diff(), diff_stat=" a.txt | 1 +")
+    api_key = overrides.pop("api_key", KEY)
+    model = overrides.pop("model", "claude-opus-5-5")
     kwargs.update(overrides)
-    return generate_description(**kwargs)
+    return PrDescriber(model, api_key, post).describe(**kwargs)
 
 
 class GenerateDescriptionTest(unittest.TestCase):

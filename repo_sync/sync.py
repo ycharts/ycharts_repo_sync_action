@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from repo_sync.commands import CommandError, Runner
-from repo_sync.describe import DescribeError, GeneratedDescription, HttpPost, generate_description
+from repo_sync.describe import DescribeError, GeneratedDescription, HttpPost, PrDescriber
 from repo_sync.git import GitClient, GitHubClient, PreviousPr
 from repo_sync.pr_body import build_body, build_title
 from repo_sync.settings import Settings
@@ -131,14 +131,12 @@ class RepoSync:
             synced_files,
             self.settings.pr_description_exclude,
         )
-        return generate_description(
-            api_key=self.settings.anthropic_api_key,
-            model=self.settings.anthropic_model,
-            previous_prs=previous_prs,
-            source_diff=source_diff,
-            diff_stat=git.diff_stat(),
-            http_post=self.http_post,
+        describer = PrDescriber(
+            self.settings.anthropic_model,
+            self.settings.anthropic_api_key,
+            self.http_post,
         )
+        return describer.describe(previous_prs, source_diff, git.diff_stat())
 
     def run(self, clone_dir: str | None = None) -> None:
         if clone_dir is not None:

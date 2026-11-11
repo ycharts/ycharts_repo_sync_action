@@ -25,6 +25,11 @@ class Settings:
     labels: list[str]
     github_repository: str
     github_sha: str
+    generate_pr_description: bool = False
+    anthropic_model: str = "claude-opus-5-5"
+    pr_description_exclude: list[str] = dataclasses.field(default_factory=list)
+    anthropic_api_key: str | None = dataclasses.field(default=None, repr=False)
+    github_event_path: str | None = None
 
     @classmethod
     def from_env(
@@ -54,6 +59,7 @@ class Settings:
             head = f"{prefix}-{moment.strftime('%Y%m%d%H%M%S')}"
 
         labels = [part.strip() for part in env.get("INPUT_PULL_REQUEST_LABELS", "").split(",")]
+        excludes = [part.strip() for part in get("INPUT_PR_DESCRIPTION_EXCLUDE").split(",")]
         return cls(
             source_folder=get("INPUT_SOURCE_FOLDER"),
             source_files=get("INPUT_SOURCE_FILES").split(),
@@ -68,4 +74,11 @@ class Settings:
             labels=[label for label in labels if label],
             github_repository=get("GITHUB_REPOSITORY"),
             github_sha=get("GITHUB_SHA"),
+            generate_pr_description=get("INPUT_GENERATE_PR_DESCRIPTION").lower() == "true",
+            anthropic_model=get("INPUT_ANTHROPIC_MODEL") or "claude-opus-5-5",
+            pr_description_exclude=[glob for glob in excludes if glob],
+            # Plain env vars, not action inputs:
+            # the workflow passes ANTHROPIC_API_KEY through the step's env.
+            anthropic_api_key=get("ANTHROPIC_API_KEY") or None,
+            github_event_path=get("GITHUB_EVENT_PATH") or None,
         )

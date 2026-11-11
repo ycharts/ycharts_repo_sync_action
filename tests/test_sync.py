@@ -1,24 +1,36 @@
 import json
+from unittest import mock
+from pathlib import Path
 import os
 import tempfile
 import unittest
 from collections.abc import Sequence
 
 from repo_sync.commands import CommandError
+from repo_sync.describe import HttpPost
+from repo_sync.git import PreviousPr
 from repo_sync.settings import Settings
-from repo_sync.sync import RepoSync, SyncError
+from repo_sync.sync import MAX_BODY_BYTES, RepoSync, SyncError
 from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
 
 
 def prs(*items: tuple[str, str] | tuple[str, str, bool]) -> str:
     return json.dumps(
         [
-            {"number": int(i[0]), "headRefName": i[1], "isCrossRepository": i[2] if len(i) > 2 else False}
+            {
+                "number": int(i[0]),
+                "title": f"t{i[0]}",
+                "body": "",
+                "headRefName": i[1],
+                "createdAt": "2024-01-01T00:00:00Z",
+                "isCrossRepository": i[2] if len(i) > 2 else False,
+            }
             for i in items
         ]
     )
 
 
+LIST_FIELDS = "number,title,body,headRefName,createdAt,isCrossRepository"
 CREATED = {("gh", "pr", "create"): "https://github.com/org/repo/pull/42\n"}
 
 
@@ -42,12 +54,12 @@ class RepoSyncTest(FlowTestCase):
                 ["git", "commit", "--message", "Update from https://github.com/org/source/commit/abc123"],
                 ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/sync-branch"],
                 ["git", "push", "-u", "origin", "HEAD:sync-branch"],
+                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
+                 "--limit", "100", "--json", LIST_FIELDS],
                 ["gh", "pr", "list", "--head", "sync-branch", "--state", "open",
                  "--json", "number,isCrossRepository"],
-                ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
+                ["gh", "pr", "create", "--title", "sync-branch", "--body-file", mock.ANY,
                  "--base", "dev", "--head", "sync-branch", "-r", "r1,r2"],
-                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
-                 "--limit", "100", "--json", "number,headRefName,isCrossRepository"],
                 ["gh", "pr", "close", "3"],
             ],
         )
@@ -139,19 +151,25 @@ class RepoSyncTest(FlowTestCase):
         return [c[3] for c in runner.commands if c[:3] == ["gh", "pr", "close"]]
 
     def test_push_then_create_then_close(self):
-        runner = FakeRunner(failures={("git", "diff"): 1})
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--search"): prs(("3", "sync-branch-20240101000000"))},
+            failures={("git", "diff"): 1},
+        )
         self.sync(runner)
         push = self.index(runner, "git", "push")
         create = self.index(runner, "gh", "pr", "create")
         listing = self.index(runner, "gh", "pr", "list", "--search")
-        self.assertLess(push, create)
-        self.assertLess(create, listing)
+        close = self.index(runner, "gh", "pr", "close")
+        self.assertLess(push, listing)
+        self.assertLess(listing, create)
+        self.assertLess(create, close)
 
     def test_reuses_open_pr_on_head_and_still_labels(self):
         runner = FakeRunner(
             outputs={
                 ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
-                ("gh", "pr", "list", "--search"): prs(("5", "sync-branch"), ("8", "sync-branch-20240101000000")),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "sync-branch", "sync-branch")),
+                ("gh", "pr", "list", "--state"): prs(("5", "sync-branch"), ("8", "other-branch")),
             },
             failures={("git", "diff"): 1},
         )
@@ -170,7 +188,7 @@ class RepoSyncTest(FlowTestCase):
         )
         self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
         self.assertIn(
-            ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
+            ["gh", "pr", "create", "--title", "sync-branch", "--body-file", mock.ANY,
              "--base", "main", "--head", "sync-branch"],
             runner.commands,
         )
@@ -252,6 +270,183 @@ class RepoSyncTest(FlowTestCase):
         self.assertIn("matched nothing", str(ctx.exception))
 
 
+SOURCE_LINE = "Source commit: https://github.com/org/source/commit/abc123"
+COMMIT_RESPONSE = json.dumps(
+    {"commit": {"message": "Change a"}, "files": [{"filename": "src/a.txt", "status": "modified", "patch": "+x"}]}
+)
+
+
+def anthropic_reply(title: str = "Update a", body: str = "Changed a.") -> bytes:
+    text = json.dumps({"title": title, "body": body})
+    return json.dumps({"stop_reason": "end_turn", "content": [{"type": "text", "text": text}]}).encode()
+
+
+def pr_json(number: int, head: str, title: str, body: str, created: str = "2024-01-01T00:00:00Z") -> dict:
+    return {
+        "number": number,
+        "title": title,
+        "body": body,
+        "headRefName": head,
+        "createdAt": created,
+        "isCrossRepository": False,
+    }
+
+
+class DescriptionTest(FlowTestCase):
+    def setUp(self):
+        super().setUp()
+        self.requests: list[dict] = []
+
+    def http_post(self, url: str, headers: dict[str, str], body: bytes) -> bytes:
+        self.requests.append(json.loads(body))
+        return anthropic_reply()
+
+    def runner(self, outputs: dict[tuple[str, ...], str] | None = None, **kwargs) -> FakeRunner:
+        return FakeRunner(
+            outputs={("gh", "api"): COMMIT_RESPONSE, **CREATED, **(outputs or {})},
+            failures={("git", "diff"): 1},
+            **kwargs,
+        )
+
+    def run_capturing(
+        self, runner: FakeRunner, http_post: HttpPost | None = None, **overrides: str
+    ) -> tuple[list[tuple[list[str], str]], str]:
+        captured: list[tuple[list[str], str]] = []
+        original = FakeRunner.__call__
+
+        def spy(self_, args, cwd=None, capture=False):
+            args = list(args)
+            if "--body-file" in args:
+                with open(args[args.index("--body-file") + 1], encoding="utf-8") as f:
+                    captured.append((args, f.read()))
+            return original(self_, args, cwd, capture)
+
+        with mock.patch.object(FakeRunner, "__call__", spy):
+            _, out = self.sync(runner, http_post or self.http_post, **overrides)
+        return captured, out
+
+    def closed(self, runner: FakeRunner) -> list[str]:
+        return [c[3] for c in runner.commands if c[:3] == ["gh", "pr", "close"]]
+
+    def generation(self, **overrides: str) -> dict[str, str]:
+        return {"INPUT_GENERATE_PR_DESCRIPTION": "true", "ANTHROPIC_API_KEY": "sk-secret", **overrides}
+
+    def test_generation_off_makes_no_api_calls_and_uses_branch_as_body(self):
+        runner = self.runner()
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertNotIn(["gh", "api"], [c[:2] for c in runner.commands])
+        self.assertEqual(self.requests, [])
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, "sync-branch")
+
+    def test_generation_off_appends_source_commit_to_previous_body(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "t3", "Older body")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, f"Older body\n\n---\n\n{SOURCE_LINE}")
+
+    def test_generation_on_prefixes_title_and_appends_body(self):
+        runner = self.runner()
+        [(args, body)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch: Update a")
+        self.assertEqual(body, f"Changed a.\n\n{SOURCE_LINE}")
+        self.assertEqual(len(self.requests), 1)
+
+    def test_generation_on_passes_previous_prs_to_claude(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "Old title", "Older body")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        [(_, body)], _ = self.run_capturing(runner, **self.generation())
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertIn("Pull request #3: Old title", prompt)
+        self.assertIn("Older body", prompt)
+        self.assertEqual(body, f"Older body\n\n---\n\nChanged a.\n\n{SOURCE_LINE}")
+
+    def test_previous_prs_given_to_claude_are_capped_at_ten(self):
+        listing = json.dumps(
+            [pr_json(n, f"sync-branch-2024010100{n:04d}", f"title{n}", "b", f"2024-01-{n:02d}T00:00:00Z") for n in range(1, 13)]
+        )
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        self.run_capturing(runner, **self.generation())
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertEqual(prompt.count("### Pull request #"), 10)
+        self.assertEqual(self.closed(runner), [str(n) for n in range(12, 0, -1)])
+
+    def test_generation_failure_warns_and_falls_back(self):
+        def failing(url: str, headers: dict[str, str], body: bytes) -> bytes:
+            raise OSError("boom")
+
+        captured, out = self.run_capturing(self.runner(), failing, **self.generation())
+        [(args, body)] = captured
+        self.assertIn("::warning::could not generate the pull request description", out)
+        self.assertNotIn("sk-secret", out)
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, "sync-branch")
+
+    def test_source_diff_failure_warns_and_falls_back(self):
+        runner = FakeRunner(outputs=CREATED, failures={("git", "diff"): 1, ("gh", "api"): 1})
+        _, out = self.sync(runner, self.http_post, **self.generation())
+        self.assertIn("::warning::could not generate the pull request description", out)
+        self.assertEqual(self.requests, [])
+        self.assertTrue([c for c in runner.commands if c[:3] == ["gh", "pr", "create"]])
+
+    def test_reused_pr_is_edited_with_appended_body(self):
+        runner = self.runner(
+            {
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "sync-branch: Old", "Current body")),
+            }
+        )
+        [(args, body)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[:4], ["gh", "pr", "edit", "5"])
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch: Update a")
+        self.assertEqual(body, f"Current body\n\n---\n\nChanged a.\n\n{SOURCE_LINE}")
+        self.assertFalse([c for c in runner.commands if c[:3] == ["gh", "pr", "create"]])
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertIn("Pull request #5: sync-branch: Old", prompt)
+
+    def test_reused_pr_keeps_its_title_without_a_generated_one(self):
+        runner = self.runner(
+            {
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "Hand edited", "Current body")),
+            }
+        )
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertEqual(args[args.index("--title") + 1], "Hand edited")
+        self.assertIn(SOURCE_LINE, body)
+
+    def test_reused_pr_keeps_its_title_when_generation_fails(self):
+        runner = FakeRunner(
+            outputs={
+                **CREATED,
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "Hand edited", "Current body")),
+            },
+            failures={("git", "diff"): 1, ("gh", "api"): 1},
+        )
+        [(args, _)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[args.index("--title") + 1], "Hand edited")
+
+    def test_label_mode_closes_label_matches(self):
+        listing = json.dumps([pr_json(7, "unrelated-branch", "t7", "b7")])
+        runner = self.runner({("gh", "pr", "list", "--state"): listing})
+        self.sync(runner, self.http_post, INPUT_PULL_REQUEST_LABELS="sync")
+        self.assertEqual(self.closed(runner), ["7"])
+        self.assertIn(
+            ["gh", "pr", "list", "--state", "open", "--label", "sync", "--limit", "100", "--json", LIST_FIELDS],
+            runner.commands,
+        )
+
+    def test_previous_prs_closed_after_create(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "t3", "b3")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        self.sync(runner, self.http_post)
+        create = next(i for i, c in enumerate(runner.commands) if c[:3] == ["gh", "pr", "create"])
+        close = next(i for i, c in enumerate(runner.commands) if c[:3] == ["gh", "pr", "close"])
+        self.assertLess(create, close)
+
+
 class CopyFilesTest(unittest.TestCase):
     def setUp(self):
         patch_github_token(self)
@@ -272,11 +467,11 @@ class CopyFilesTest(unittest.TestCase):
         with open(path) as f:
             return f.read()
 
-    def copy(self, files: str, dest: str = "") -> None:
+    def copy(self, files: str, dest: str = "") -> list[str]:
         settings = Settings.from_env(
             base_env(INPUT_SOURCE_FOLDER=self.src, INPUT_SOURCE_FILES=files, INPUT_DESTINATION_FOLDER=dest)
         )
-        RepoSync(settings).copy_files(self.clone)
+        return RepoSync(settings).copy_files(self.clone)
 
     def test_single_file(self):
         self.write(os.path.join(self.src, "a.txt"), "hello")
@@ -452,6 +647,125 @@ class CopyFilesTest(unittest.TestCase):
         self.write(os.path.join(self.clone, "d"), "file")
         with self.assertRaises(SyncError):
             self.copy("d")
+
+    def test_returns_files_relative_to_source_root_outside_a_repository(self):
+        self.write(os.path.join(self.src, "a.txt"))
+        self.write(os.path.join(self.src, "d", "b.txt"))
+        self.write(os.path.join(self.src, "d", "e", "c.txt"))
+        self.assertEqual(self.copy("a.txt\nd"), ["a.txt", "d/b.txt", "d/e/c.txt"])
+
+    def copy_in_workspace(self, workspace: str, source_folder: str, files: str) -> list[str]:
+        settings = Settings.from_env(
+            base_env(INPUT_SOURCE_FOLDER=source_folder, INPUT_SOURCE_FILES=files)
+        )
+        with mock.patch("pathlib.Path.cwd", return_value=Path(workspace)):
+            return RepoSync(settings).copy_files(self.clone)
+
+    def test_paths_are_relative_to_the_checkout_root(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "src", "docs", "a.txt"))
+        os.makedirs(os.path.join(workspace, ".git"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "src"), "docs")
+        self.assertEqual(copied, ["src/docs/a.txt"])
+
+    def test_nested_checkout_inside_workspace(self):
+        workspace = os.path.join(self.root, "workspace")
+        app = os.path.join(workspace, "app")
+        self.write(os.path.join(app, "docs", "a.txt"))
+        os.makedirs(os.path.join(app, ".git"))
+        copied = self.copy_in_workspace(workspace, os.path.join(app, "docs"), "a.txt")
+        self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_git_above_workspace_is_ignored(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "docs", "a.txt"))
+        os.makedirs(os.path.join(self.root, ".git"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "docs"), "a.txt")
+        self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_falls_back_to_workspace_without_git(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "docs", "a.txt"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "docs"), "a.txt")
+        self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_source_outside_workspace_falls_back_to_source_folder(self):
+        workspace = os.path.join(self.root, "workspace")
+        os.makedirs(workspace)
+        self.write(os.path.join(self.src, "a.txt"))
+        os.makedirs(os.path.join(self.root, ".git"))
+        copied = self.copy_in_workspace(workspace, self.src, "a.txt")
+        self.assertEqual(copied, ["a.txt"])
+
+    def test_returned_paths_include_symlinks_in_directory(self):
+        self.write(os.path.join(self.src, "d", "a.txt"))
+        os.symlink("a.txt", os.path.join(self.src, "d", "link.txt"))
+        self.assertEqual(self.copy("d"), ["d/a.txt", "d/link.txt"])
+
+
+def make_pr(number: int, body: str, head_branch: str = "sync/x") -> PreviousPr:
+    return PreviousPr(
+        number=number,
+        title=f"t{number}",
+        body=body,
+        head_branch=head_branch,
+        created_at="2024-01-01T00:00:00Z",
+    )
+
+
+class BuildTitleTest(unittest.TestCase):
+    def test_with_generated_title(self):
+        self.assertEqual(RepoSync.build_title("main", "Add thing"), "main: Add thing")
+
+    def test_without_generated_title(self):
+        self.assertEqual(RepoSync.build_title("main", None), "main")
+        self.assertEqual(RepoSync.build_title("main", ""), "main")
+
+
+class BuildBodyTest(unittest.TestCase):
+    def test_picks_newest_real_body(self):
+        prs = [make_pr(3, "newest"), make_pr(2, "older")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "newest\n\n---\n\nS")
+
+    def test_skips_blank_and_branch_name_bodies(self):
+        prs = [
+            make_pr(4, ""),
+            make_pr(3, " \n\t "),
+            make_pr(2, "  sync/x \n", head_branch=" sync/x"),
+            make_pr(1, "real"),
+        ]
+        self.assertEqual(RepoSync.build_body(prs, "S", False, "b"), "real\n\n---\n\nS")
+
+    def test_branch_name_body_of_other_branch_is_real(self):
+        prs = [make_pr(1, "other", head_branch="sync/x")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "other\n\n---\n\nS")
+
+    def test_separator_layout_trims_trailing_whitespace(self):
+        prs = [make_pr(1, "body\n\n")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "body\n\n---\n\nS")
+
+    def test_size_cap_boundary(self):
+        section = "S"
+        overhead = len("\n\n---\n\n") + len(section)
+        at_cap = make_pr(7, "a" * (MAX_BODY_BYTES - overhead))
+        over_cap = make_pr(7, "a" * (MAX_BODY_BYTES - overhead + 1))
+        self.assertEqual(
+            len(RepoSync.build_body([at_cap], section, True, "b").encode()), MAX_BODY_BYTES
+        )
+        self.assertEqual(
+            RepoSync.build_body([over_cap], section, True, "b"), "Earlier updates: #7\n\nS"
+        )
+
+    def test_size_cap_counts_utf8_bytes(self):
+        prs = [make_pr(9, "é" * (MAX_BODY_BYTES // 2))]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "Earlier updates: #9\n\nS")
+
+    def test_falls_back_to_section_when_generation_succeeded(self):
+        self.assertEqual(RepoSync.build_body([], "S", True, "b"), "S")
+        self.assertEqual(RepoSync.build_body([make_pr(1, "b", head_branch="b")], "S", True, "b"), "S")
+
+    def test_falls_back_to_branch_when_generation_failed(self):
+        self.assertEqual(RepoSync.build_body([], "Source commit: x", False, "feat"), "feat")
 
 
 if __name__ == "__main__":

@@ -2,12 +2,21 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from repo_sync.commands import CommandError, CommandRunner, Runner
-from repo_sync.previous_prs import PreviousPr
+
+
+@dataclass(frozen=True)
+class PreviousPr:
+    number: int
+    title: str
+    body: str
+    head_branch: str
+    created_at: str
 
 
 class MissingTokenError(Exception):
@@ -166,12 +175,23 @@ class GitHubClient:
                 cwd=self.cwd,
             )
 
-    def api(self, endpoint: str) -> str:
-        return self.runner(["gh", "api", endpoint], cwd=self.cwd, capture=True)
+    def source_push(self, repository: str, sha: str, before: str | None) -> dict[str, Any]:
+        if before:
+            endpoint = f"repos/{repository}/compare/{before}...{sha}"
+        else:
+            endpoint = f"repos/{repository}/commits/{sha}"
+        output = self.runner(["gh", "api", endpoint], cwd=self.cwd, capture=True)
+        try:
+            data = json.loads(output)
+        except ValueError as error:
+            raise ValueError(f"unexpected response from GitHub for {endpoint}: not JSON") from error
+        if not isinstance(data, dict):
+            raise ValueError(f"unexpected response from GitHub for {endpoint}: not an object")
+        return data
 
     @staticmethod
     @contextmanager
-    def _body_file(body: str) -> Iterator[str]:
+    def _body_file(body: str) -> Generator[str]:
         # A file, not --body: bodies near 60 KB are too large to pass safely in argv.
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "body.md")

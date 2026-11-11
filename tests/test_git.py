@@ -7,8 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from repo_sync.commands import CommandError
-from repo_sync.previous_prs import PreviousPr
-from repo_sync.git import GitClient, GitHubClient, MissingTokenError, PullRequest
+from repo_sync.git import GitClient, GitHubClient, MissingTokenError, PreviousPr, PullRequest
 from tests.helpers import FakeRunner, patch_github_token
 
 
@@ -235,13 +234,30 @@ class GitHubClientTest(unittest.TestCase):
         self.assertEqual(seen["body"], body)
         self.assertFalse(os.path.exists(seen["path"]))
 
-    def test_api(self):
-        runner = FakeRunner(outputs={("gh", "api"): "{}"})
-        self.assertEqual(GitHubClient("/c", runner).api("repos/o/r/pulls/1"), "{}")
+    def test_source_push_compare_when_before_given(self):
+        runner = FakeRunner(outputs={("gh", "api"): '{"files": []}'})
+        self.assertEqual(GitHubClient("/c", runner).source_push("o/r", "b" * 40, "a" * 40), {"files": []})
         self.assertEqual(
             runner.calls,
-            [{"args": ["gh", "api", "repos/o/r/pulls/1"], "cwd": "/c", "capture": True}],
+            [{"args": ["gh", "api", f"repos/o/r/compare/{'a' * 40}...{'b' * 40}"], "cwd": "/c", "capture": True}],
         )
+
+    def test_source_push_single_commit_without_before(self):
+        runner = FakeRunner(outputs={("gh", "api"): "{}"})
+        GitHubClient("/c", runner).source_push("o/r", "b" * 40, None)
+        self.assertEqual(runner.calls[0]["args"], ["gh", "api", f"repos/o/r/commits/{'b' * 40}"])
+
+    def test_source_push_failure_raises_command_error(self):
+        runner = FakeRunner(failures={("gh", "api"): 1})
+        with self.assertRaises(CommandError):
+            GitHubClient("/c", runner).source_push("o/r", "b" * 40, None)
+
+    def test_source_push_bad_response_raises_value_error(self):
+        for output in ("not json", "[]", ""):
+            with self.subTest(output=output):
+                runner = FakeRunner(outputs={("gh", "api"): output})
+                with self.assertRaises(ValueError):
+                    GitHubClient("/c", runner).source_push("o/r", "b" * 40, None)
 
     def test_find_open_pr(self):
         cases = {

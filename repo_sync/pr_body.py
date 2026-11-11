@@ -1,4 +1,4 @@
-from repo_sync.previous_prs import PreviousPr
+from repo_sync.git import PreviousPr
 
 MAX_BODY_BYTES = 60000
 

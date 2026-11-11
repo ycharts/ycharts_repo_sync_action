@@ -1,8 +1,8 @@
 import fnmatch
 import json
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 MAX_SOURCE_COMMITS = 50
 MAX_API_FILES = 300
@@ -36,7 +36,7 @@ class SourceDiff:
     synced_files_changed: bool
 
 
-def _before_sha(event_path: str | None) -> str | None:
+def before_sha(event_path: str | None) -> str | None:
     # A forced push or a new branch (all-zero before) has no usable base,
     # so the caller falls back to the head commit alone.
     if not event_path:
@@ -61,39 +61,13 @@ def _is_excluded(filename: str, excludes: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(filename, pattern) for pattern in patterns)
 
 
-def _as_dict(value: object) -> dict:
-    if not isinstance(value, dict):
-        raise SourceDiffError("unexpected response shape from GitHub")
-    return value
-
-
 def _commit_message(commit: dict) -> str:
     inner = commit.get("commit")
     message = inner.get("message") if isinstance(inner, dict) else None
     return message if isinstance(message, str) else ""
 
 
-def fetch_source_diff(
-    gh_api: Callable[[str], str],
-    repository: str,
-    sha: str,
-    event_path: str | None,
-    synced_files: set[str],
-    excludes: list[str],
-) -> SourceDiff:
-    before = _before_sha(event_path)
-    if before:
-        endpoint = f"repos/{repository}/compare/{before}...{sha}"
-    else:
-        endpoint = f"repos/{repository}/commits/{sha}"
-    try:
-        data = _as_dict(json.loads(gh_api(endpoint)))
-    except SourceDiffError:
-        raise
-    except Exception as error:
-        # Type name only: the error text could include secrets.
-        raise SourceDiffError(f"could not fetch {endpoint}: {type(error).__name__}") from error
-
+def build_source_diff(data: dict[str, Any], synced_files: set[str], excludes: list[str]) -> SourceDiff:
     files = data.get("files") or []
     if not isinstance(files, list):
         raise SourceDiffError("unexpected files in response from GitHub")

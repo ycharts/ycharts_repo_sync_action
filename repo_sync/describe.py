@@ -4,7 +4,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from repo_sync.previous_prs import PreviousPr
+from repo_sync.git import PreviousPr
 from repo_sync.source_diff import SourceDiff
 
 API_URL = "https://api.anthropic.com/v1/messages"

@@ -6,11 +6,10 @@ from pathlib import Path
 
 from repo_sync.commands import CommandError, Runner
 from repo_sync.describe import DescribeError, GeneratedDescription, HttpPost, generate_description
-from repo_sync.git import GitClient, GitHubClient
+from repo_sync.git import GitClient, GitHubClient, PreviousPr
 from repo_sync.pr_body import build_body, build_title
-from repo_sync.previous_prs import PreviousPr
 from repo_sync.settings import Settings
-from repo_sync.source_diff import SourceDiffError, fetch_source_diff
+from repo_sync.source_diff import SourceDiffError, before_sha, build_source_diff
 
 MAX_PREVIOUS_PRS = 10
 
@@ -122,11 +121,13 @@ class RepoSync:
         previous_prs: list[PreviousPr],
         synced_files: set[str],
     ) -> GeneratedDescription:
-        source_diff = fetch_source_diff(
-            github.api,
+        data = github.source_push(
             self.settings.github_repository,
             self.settings.github_sha,
-            self.settings.github_event_path,
+            before_sha(self.settings.github_event_path),
+        )
+        source_diff = build_source_diff(
+            data,
             synced_files,
             self.settings.pr_description_exclude,
         )
@@ -198,7 +199,7 @@ class RepoSync:
             print("Generating pull request description", flush=True)
             try:
                 generated = self._generate(git, github, described, set(synced_files))
-            except (SourceDiffError, DescribeError, CommandError) as exc:
+            except (SourceDiffError, DescribeError, CommandError, ValueError) as exc:
                 print(
                     f"::warning::could not generate the pull request description, using the default title and body: {exc}",
                     flush=True,

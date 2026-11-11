@@ -1,7 +1,7 @@
 import unittest
 
 from repo_sync.pr_body import MAX_BODY_BYTES, build_body, build_title
-from repo_sync.previous_prs import PreviousPr
+from repo_sync.git import PreviousPr
 
 
 def pr(number: int, body: str, head_branch: str = "sync/x") -> PreviousPr:

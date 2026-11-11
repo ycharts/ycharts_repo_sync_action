@@ -12,7 +12,7 @@ from repo_sync.describe import (
     DescribeError,
     generate_description,
 )
-from repo_sync.previous_prs import PreviousPr
+from repo_sync.git import PreviousPr
 from repo_sync.source_diff import SourceDiff
 
 KEY = "sk-ant-test-secret-1234567890"

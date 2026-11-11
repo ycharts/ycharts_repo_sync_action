@@ -10,6 +10,7 @@ def build_title(branch: str, generated_title: str | None) -> str:
 
 
 def _newest_real_body(previous_prs: list[PreviousPr]) -> PreviousPr | None:
+    # A body equal to the head branch is the default placeholder, not a description.
     for pr in previous_prs:
         body = pr.body.strip()
         if body and body != pr.head_branch.strip():

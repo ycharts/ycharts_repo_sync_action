@@ -77,6 +77,8 @@ class Settings:
             generate_pr_description=get("INPUT_GENERATE_PR_DESCRIPTION").lower() == "true",
             anthropic_model=get("INPUT_ANTHROPIC_MODEL") or "claude-opus-5-5",
             pr_description_exclude=[glob for glob in excludes if glob],
+            # Plain env vars, not action inputs:
+            # the workflow passes ANTHROPIC_API_KEY through the step's env.
             anthropic_api_key=get("ANTHROPIC_API_KEY") or None,
             github_event_path=get("GITHUB_EVENT_PATH") or None,
         )

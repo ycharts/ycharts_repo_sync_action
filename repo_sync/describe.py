@@ -110,6 +110,7 @@ def _build_user_content(
         "Stat of the changes this pull request makes to the destination repository (for scale only):\n"
         f"<diff_stat>\n{stat}</diff_stat>\n\n"
     )
+    # A truncated or partial diff can be missing the synced files' changes.
     if not truncated and not source_diff.synced_files_changed:
         parts.append("The latest source push changed none of the synced files.\n\n")
     if source_diff.partial:
@@ -196,6 +197,7 @@ def generate_description(
     except urllib.error.HTTPError as error:
         raise DescribeError(f"API returned HTTP {error.code}: {_error_message(error)}") from None
     except Exception as error:
+        # Type name only: the error text could echo the API key.
         raise DescribeError(f"API request failed: {type(error).__name__}") from None
 
     result = _extract_result(response_body)

@@ -86,6 +86,9 @@ class RepoSync:
 
     @staticmethod
     def _repository_root(source_root: Path) -> Path:
+        # Copied paths must match the file names GitHub reports for the source push,
+        # which are relative to the repository root.
+        # Walks up for .git rather than running git, so copying makes no runner calls.
         cwd = Path.cwd().resolve()
         for candidate in (cwd, *cwd.parents):
             if (candidate / ".git").exists():
@@ -178,6 +181,8 @@ class RepoSync:
             self.settings.head_branch_prefix, head, self.settings.labels
         )
         existing = github.find_open_pr(head)
+        # The open PR on this head is the newest earlier PR, so its body keeps accumulating.
+        # list_previous_prs excludes the current head, so it is never closed below.
         described = list(previous)
         if existing is not None:
             described.insert(0, github.get_pr(existing))

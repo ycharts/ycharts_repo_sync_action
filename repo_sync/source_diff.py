@@ -7,6 +7,8 @@ from dataclasses import dataclass
 MAX_SOURCE_COMMITS = 50
 MAX_API_FILES = 300
 
+# fnmatch's * also matches /, so *.min.js matches at any depth,
+# but a bare file name needs a */ twin to match below the root.
 BUILTIN_EXCLUDES = (
     "package-lock.json",
     "*/package-lock.json",
@@ -35,6 +37,8 @@ class SourceDiff:
 
 
 def _before_sha(event_path: str | None) -> str | None:
+    # A forced push or a new branch (all-zero before) has no usable base,
+    # so the caller falls back to the head commit alone.
     if not event_path:
         return None
     try:
@@ -87,6 +91,7 @@ def fetch_source_diff(
     except SourceDiffError:
         raise
     except Exception as error:
+        # Type name only: the error text could include secrets.
         raise SourceDiffError(f"could not fetch {endpoint}: {type(error).__name__}") from error
 
     files = data.get("files") or []
@@ -102,11 +107,13 @@ def fetch_source_diff(
             f"### {filename} ({entry.get('status') or 'modified'}, "
             f"+{entry.get('additions') or 0}/-{entry.get('deletions') or 0})"
         )
+        # Excluded files keep their header so the change still shows, without the patch.
         patch = entry.get("patch") or ""
         if patch and not _is_excluded(filename, excludes):
             header = f"{header}\n{patch}"
         sections.append(header)
 
+    # A compare response lists its commits; a single-commit response is the commit itself.
     commits = data.get("commits")
     if isinstance(commits, list):
         messages = [_commit_message(c) for c in commits if isinstance(c, dict)]
@@ -117,6 +124,7 @@ def fetch_source_diff(
     return SourceDiff(
         patches="\n".join(sections),
         commit_messages=messages,
+        # GitHub returns at most MAX_API_FILES files per response.
         partial=len(files) >= MAX_API_FILES,
         synced_files_changed=bool(kept),
     )

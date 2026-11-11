@@ -132,6 +132,7 @@ class GitHubClient:
             head = pr["headRefName"]
             if pr["isCrossRepository"] or head == current_head:
                 continue
+            # With labels, gh already filtered by label, so the head name isn't checked.
             if not labels and head != prefix and not timestamped.fullmatch(head):
                 continue
             previous.append(self._to_previous_pr(pr))
@@ -171,6 +172,7 @@ class GitHubClient:
     @staticmethod
     @contextmanager
     def _body_file(body: str) -> Iterator[str]:
+        # A file, not --body: bodies near 60 KB are too large to pass safely in argv.
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "body.md")
             with open(path, "w", encoding="utf-8") as f:

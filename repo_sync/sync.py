@@ -18,7 +18,7 @@ class RepoSync:
         self.settings = settings
         self.runner = runner
 
-    def copy_files(self, clone_dir: str | Path) -> None:
+    def copy_files(self, clone_dir: str | Path) -> list[str]:
         s = self.settings
         source_folder, source_files, destination_folder = s.source_folder, s.source_files, s.destination_folder
         source_root = Path(source_folder).resolve()
@@ -30,6 +30,8 @@ class RepoSync:
         if not source_root.is_dir():
             raise SyncError(f"source_folder '{source_folder}' is not a directory")
 
+        repo_root = self._repository_root(source_root)
+        copied: set[str] = set()
         current = destination_root
         try:
             destination_root.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,11 @@ class RepoSync:
                     target = destination_root / os.path.normpath(match)
                     current = target
                     if lexical.is_dir() and not lexical.is_symlink():
+                        for dirpath, dirnames, filenames in lexical.walk():
+                            for name in dirnames + filenames:
+                                entry = dirpath / name
+                                if entry.is_symlink() or not entry.is_dir():
+                                    copied.add(entry.relative_to(repo_root).as_posix())
                         self._clear_symlink_targets(lexical, target)
                         shutil.copytree(
                             lexical,
@@ -60,8 +67,20 @@ class RepoSync:
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
                         self._copy_file(lexical, target)
+                        copied.add(lexical.relative_to(repo_root).as_posix())
         except OSError as exc:
             raise SyncError(f"failed to copy '{current}': {exc}") from exc
+        return sorted(copied)
+
+    @staticmethod
+    def _repository_root(source_root: Path) -> Path:
+        cwd = Path.cwd().resolve()
+        for candidate in (cwd, *cwd.parents):
+            if (candidate / ".git").exists():
+                if source_root.is_relative_to(candidate):
+                    return candidate
+                break
+        return source_root
 
     @staticmethod
     def _copy_file(source: str | Path, target: str | Path) -> None:
@@ -134,8 +153,8 @@ class RepoSync:
 
         # Only after the push and PR succeed, so a failure never leaves no PR open.
         print("Closing older PRs", flush=True)
-        for number in github.list_open_prs(self.settings.head_branch_prefix, self.settings.head_branch):
-            github.close_pr(number)
+        for previous in github.list_previous_prs(self.settings.head_branch_prefix, self.settings.head_branch, []):
+            github.close_pr(previous.number)
 
         # The number is unset when `gh pr create` printed no PR URL.
         if self.settings.labels and pr.number is None:

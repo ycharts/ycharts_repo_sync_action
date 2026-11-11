@@ -1,4 +1,6 @@
 import json
+from unittest import mock
+from pathlib import Path
 import os
 import tempfile
 import unittest
@@ -13,12 +15,20 @@ from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
 def prs(*items: tuple[str, str] | tuple[str, str, bool]) -> str:
     return json.dumps(
         [
-            {"number": int(i[0]), "headRefName": i[1], "isCrossRepository": i[2] if len(i) > 2 else False}
+            {
+                "number": int(i[0]),
+                "title": f"t{i[0]}",
+                "body": "",
+                "headRefName": i[1],
+                "createdAt": "2024-01-01T00:00:00Z",
+                "isCrossRepository": i[2] if len(i) > 2 else False,
+            }
             for i in items
         ]
     )
 
 
+LIST_FIELDS = "number,title,body,headRefName,createdAt,isCrossRepository"
 CREATED = {("gh", "pr", "create"): "https://github.com/org/repo/pull/42\n"}
 
 
@@ -44,10 +54,10 @@ class RepoSyncTest(FlowTestCase):
                 ["git", "push", "-u", "origin", "HEAD:sync-branch"],
                 ["gh", "pr", "list", "--head", "sync-branch", "--state", "open",
                  "--json", "number,isCrossRepository"],
-                ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
+                ["gh", "pr", "create", "--title", "sync-branch", "--body-file", mock.ANY,
                  "--base", "dev", "--head", "sync-branch", "-r", "r1,r2"],
                 ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
-                 "--limit", "100", "--json", "number,headRefName,isCrossRepository"],
+                 "--limit", "100", "--json", LIST_FIELDS],
                 ["gh", "pr", "close", "3"],
             ],
         )
@@ -170,7 +180,7 @@ class RepoSyncTest(FlowTestCase):
         )
         self.sync(runner, INPUT_PULL_REQUEST_LABELS="bug")
         self.assertIn(
-            ["gh", "pr", "create", "--title", "sync-branch", "--body", "sync-branch",
+            ["gh", "pr", "create", "--title", "sync-branch", "--body-file", mock.ANY,
              "--base", "main", "--head", "sync-branch"],
             runner.commands,
         )
@@ -272,11 +282,11 @@ class CopyFilesTest(unittest.TestCase):
         with open(path) as f:
             return f.read()
 
-    def copy(self, files: str, dest: str = "") -> None:
+    def copy(self, files: str, dest: str = "") -> list[str]:
         settings = Settings.from_env(
             base_env(INPUT_SOURCE_FOLDER=self.src, INPUT_SOURCE_FILES=files, INPUT_DESTINATION_FOLDER=dest)
         )
-        RepoSync(settings).copy_files(self.clone)
+        return RepoSync(settings).copy_files(self.clone)
 
     def test_single_file(self):
         self.write(os.path.join(self.src, "a.txt"), "hello")
@@ -456,3 +466,15 @@ class CopyFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_returns_files_relative_to_source_root_outside_a_repository(self):
+        self.write(os.path.join(self.src, "a.txt"))
+        self.write(os.path.join(self.src, "d", "b.txt"))
+        self.write(os.path.join(self.src, "d", "e", "c.txt"))
+        self.assertEqual(self.copy("a.txt\nd"), ["a.txt", "d/b.txt", "d/e/c.txt"])
+
+    def test_paths_are_relative_to_the_checkout_root(self):
+        self.write(os.path.join(self.src, "docs", "a.txt"))
+        os.makedirs(os.path.join(self.root, ".git"))
+        with mock.patch("pathlib.Path.cwd", return_value=Path(self.root)):
+            self.assertEqual(self.copy("docs"), ["src/docs/a.txt"])

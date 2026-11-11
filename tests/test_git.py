@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from repo_sync.commands import CommandError
+from repo_sync.previous_prs import PreviousPr
 from repo_sync.git import GitClient, GitHubClient, MissingTokenError, PullRequest
 from tests.helpers import FakeRunner, patch_github_token
 
@@ -38,6 +39,18 @@ class GitClientTest(unittest.TestCase):
                 {"args": ["git", "push", "--force-with-lease", "-u", "origin", "HEAD:br"], "cwd": "/tmp/c", "capture": False},
             ],
         )
+
+    def test_diff_stat(self):
+        runner = FakeRunner(outputs={("git", "diff"): " a | 1 +\n"})
+        self.assertEqual(GitClient("/tmp/c", runner).diff_stat(), " a | 1 +\n")
+        self.assertEqual(
+            runner.calls,
+            [{"args": ["git", "diff", "--stat", "HEAD~1"], "cwd": "/tmp/c", "capture": True}],
+        )
+
+    def test_diff_stat_returns_empty_on_failure(self):
+        runner = FakeRunner(failures={("git", "diff"): 128})
+        self.assertEqual(GitClient("/tmp/c", runner).diff_stat(), "")
 
     def test_remote_branch_exists_on_exit_0(self):
         git = GitClient("/tmp/c", FakeRunner(remote_branch_exists=True))
@@ -96,21 +109,37 @@ class GitHubClientTest(unittest.TestCase):
         GitHubClient("/c", runner).setup_git_auth()
         self.assertEqual(runner.commands, [["gh", "auth", "setup-git"]])
 
-    def test_list_prs_command_and_parsing(self):
-        listing = json.dumps(
+    def listing(self, *items: tuple[int, str, str, bool]) -> str:
+        return json.dumps(
             [
-                {"number": 3, "headRefName": "pre", "isCrossRepository": False},
-                {"number": 12, "headRefName": "pre-20240101000000", "isCrossRepository": False},
-                {"number": 13, "headRefName": "pre-20240101000001", "isCrossRepository": True},
-                {"number": 14, "headRefName": "pre-other", "isCrossRepository": False},
-                {"number": 15, "headRefName": "pre-20240101000002", "isCrossRepository": False},
+                {
+                    "number": n,
+                    "title": f"t{n}",
+                    "body": f"b{n}",
+                    "headRefName": head,
+                    "createdAt": created,
+                    "isCrossRepository": fork,
+                }
+                for n, head, created, fork in items
             ]
         )
-        cases = {"": [], "[]": [], listing: [3, 12]}
-        for output, expected in cases.items():
+
+    def test_list_previous_prs_title_mode(self):
+        listing = self.listing(
+            (3, "pre", "2024-01-01T00:00:00Z", False),
+            (12, "pre-20240101000000", "2024-02-01T00:00:00Z", False),
+            (13, "pre-20240101000001", "2024-03-01T00:00:00Z", True),
+            (14, "pre-other", "2024-04-01T00:00:00Z", False),
+            (15, "pre-20240101000002", "2024-05-01T00:00:00Z", False),
+        )
+        expected = [
+            PreviousPr(12, "t12", "b12", "pre-20240101000000", "2024-02-01T00:00:00Z"),
+            PreviousPr(3, "t3", "b3", "pre", "2024-01-01T00:00:00Z"),
+        ]
+        for output, want in {"": [], "[]": [], listing: expected}.items():
             runner = FakeRunner(outputs={("gh", "pr", "list"): output})
             with self.subTest(output=output):
-                self.assertEqual(GitHubClient("/c", runner).list_open_prs("pre", "pre-20240101000002"), expected)
+                self.assertEqual(GitHubClient("/c", runner).list_previous_prs("pre", "pre-20240101000002", []), want)
                 self.assertEqual(
                     runner.calls[0],
                     {
@@ -118,12 +147,101 @@ class GitHubClientTest(unittest.TestCase):
                             "gh", "pr", "list",
                             "--search", "is:pr is:open pre in:title",
                             "--limit", "100",
-                            "--json", "number,headRefName,isCrossRepository",
+                            "--json", "number,title,body,headRefName,createdAt,isCrossRepository",
                         ],
                         "cwd": "/c",
                         "capture": True,
                     },
                 )
+
+    def test_list_previous_prs_label_mode(self):
+        listing = self.listing(
+            (1, "anything", "2024-01-01T00:00:00Z", False),
+            (2, "other", "2024-03-01T00:00:00Z", False),
+            (3, "fork", "2024-04-01T00:00:00Z", True),
+            (4, "current", "2024-05-01T00:00:00Z", False),
+            (5, "pre-x", "2024-02-01T00:00:00Z", False),
+        )
+        runner = FakeRunner(outputs={("gh", "pr", "list"): listing})
+        result = GitHubClient("/c", runner).list_previous_prs("pre", "current", ["a*b", "[x] y?"])
+        self.assertEqual([pr.number for pr in result], [2, 5, 1])
+        self.assertEqual(
+            runner.calls[0],
+            {
+                "args": [
+                    "gh", "pr", "list", "--state", "open",
+                    "--label", "a*b",
+                    "--label", "[x] y?",
+                    "--limit", "100",
+                    "--json", "number,title,body,headRefName,createdAt,isCrossRepository",
+                ],
+                "cwd": "/c",
+                "capture": True,
+            },
+        )
+
+    def test_list_previous_prs_null_body_becomes_empty(self):
+        output = json.dumps(
+            [{"number": 1, "title": "t", "body": None, "headRefName": "pre", "createdAt": "x", "isCrossRepository": False}]
+        )
+        runner = FakeRunner(outputs={("gh", "pr", "list"): output})
+        self.assertEqual(GitHubClient("/c", runner).list_previous_prs("pre", "cur", [])[0].body, "")
+
+    def test_list_previous_prs_failure_raises(self):
+        runner = FakeRunner(failures={("gh", "pr", "list"): 1})
+        with self.assertRaises(CommandError):
+            GitHubClient("/c", runner).list_previous_prs("pre", "cur", [])
+
+    def test_get_pr(self):
+        output = json.dumps(
+            {"number": 7, "title": "T", "body": "B", "headRefName": "h", "createdAt": "2024-01-01T00:00:00Z"}
+        )
+        runner = FakeRunner(outputs={("gh", "pr", "view"): output})
+        self.assertEqual(GitHubClient("/c", runner).get_pr(7), PreviousPr(7, "T", "B", "h", "2024-01-01T00:00:00Z"))
+        self.assertEqual(
+            runner.calls,
+            [
+                {
+                    "args": ["gh", "pr", "view", "7", "--json", "number,title,body,headRefName,createdAt"],
+                    "cwd": "/c",
+                    "capture": True,
+                }
+            ],
+        )
+
+    def test_edit_pr_passes_body_file(self):
+        seen = {}
+
+        class Reading(FakeRunner):
+            def __call__(self, args, cwd=None, capture=False):
+                seen["path"] = args[args.index("--body-file") + 1]
+                with open(seen["path"], encoding="utf-8") as f:
+                    seen["body"] = f.read()
+                return super().__call__(args, cwd, capture)
+
+        runner = Reading()
+        body = "line\n" + "é" * 70000
+        GitHubClient("/c", runner).edit_pr(9, "New title", body)
+        self.assertEqual(
+            runner.calls,
+            [
+                {
+                    "args": ["gh", "pr", "edit", "9", "--title", "New title", "--body-file", seen["path"]],
+                    "cwd": "/c",
+                    "capture": False,
+                }
+            ],
+        )
+        self.assertEqual(seen["body"], body)
+        self.assertFalse(os.path.exists(seen["path"]))
+
+    def test_api(self):
+        runner = FakeRunner(outputs={("gh", "api"): "{}"})
+        self.assertEqual(GitHubClient("/c", runner).api("repos/o/r/pulls/1"), "{}")
+        self.assertEqual(
+            runner.calls,
+            [{"args": ["gh", "api", "repos/o/r/pulls/1"], "cwd": "/c", "capture": True}],
+        )
 
     def test_find_open_pr(self):
         cases = {
@@ -199,12 +317,29 @@ class PullRequestTest(unittest.TestCase):
             self.runner.calls,
             [
                 {
-                    "args": ["gh", "pr", "create", "--title", "t", "--body", "b", "--base", "main", "--head", "h"],
+                    "args": ["gh", "pr", "create", "--title", "t", "--body-file", mock.ANY, "--base", "main", "--head", "h"],
                     "cwd": "/c",
                     "capture": True,
                 }
             ],
         )
+
+    def test_create_body_file_holds_body_and_is_removed(self):
+        seen = {}
+
+        class Reading(FakeRunner):
+            def __call__(self, args, cwd=None, capture=False):
+                seen["path"] = args[args.index("--body-file") + 1]
+                with open(seen["path"], encoding="utf-8") as f:
+                    seen["body"] = f.read()
+                return super().__call__(args, cwd, capture)
+
+        github = GitHubClient("/c", Reading())
+        pr = github.new_pull_request()
+        pr.title, pr.body, pr.base, pr.head = "t", "multi\nline body", "main", "h"
+        pr.create()
+        self.assertEqual(seen["body"], "multi\nline body")
+        self.assertFalse(os.path.exists(seen["path"]))
 
     def test_create_with_reviewers(self):
         pr = self.pull_request()
@@ -212,7 +347,7 @@ class PullRequestTest(unittest.TestCase):
         pr.create()
         self.assertEqual(
             self.runner.commands,
-            [["gh", "pr", "create", "--title", "t", "--body", "b", "--base", "main", "--head", "h", "-r", "a,b"]],
+            [["gh", "pr", "create", "--title", "t", "--body-file", mock.ANY, "--base", "main", "--head", "h", "-r", "a,b"]],
         )
         self.assertEqual(self.runner.calls[0]["cwd"], "/c")
 

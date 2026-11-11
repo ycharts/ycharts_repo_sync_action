@@ -1,9 +1,13 @@
 import json
 import os
 import re
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from repo_sync.commands import CommandError, CommandRunner, Runner
+from repo_sync.previous_prs import PreviousPr
 
 
 class MissingTokenError(Exception):
@@ -62,6 +66,12 @@ class GitClient:
             raise
         return True
 
+    def diff_stat(self) -> str:
+        try:
+            return self.runner(["git", "diff", "--stat", "HEAD~1"], cwd=self.cwd, capture=True)
+        except CommandError:
+            return ""
+
     def push(self, branch: str, force_with_lease: bool = False) -> None:
         args = ["git", "push"]
         if force_with_lease:
@@ -98,29 +108,74 @@ class GitHubClient:
                 return int(pr["number"])
         return None
 
-    def list_open_prs(self, prefix: str, current_head: str) -> list[int]:
-        # The title search only narrows candidates; titles can be edited,
-        # so the head branch decides which PRs this action opened.
-        # gh returns 30 results unless given --limit.
-        output = self.runner(
-            [
+    def list_previous_prs(self, prefix: str, current_head: str, labels: list[str]) -> list[PreviousPr]:
+        fields = "number,title,body,headRefName,createdAt,isCrossRepository"
+        if labels:
+            args = ["gh", "pr", "list", "--state", "open"]
+            for label in labels:
+                args += ["--label", label]
+            args += ["--limit", "100", "--json", fields]
+        else:
+            # The title search only narrows candidates; titles can be edited,
+            # so the head branch decides which PRs this action opened.
+            # gh returns 30 results unless given --limit.
+            args = [
                 "gh", "pr", "list",
                 "--search", f"is:pr is:open {prefix} in:title",
                 "--limit", "100",
-                "--json", "number,headRefName,isCrossRepository",
-            ],
-            cwd=self.cwd,
-            capture=True,
-        )
+                "--json", fields,
+            ]
+        output = self.runner(args, cwd=self.cwd, capture=True)
         timestamped = re.compile(rf"{re.escape(prefix)}-\d{{14}}")
-        numbers = []
+        previous = []
         for pr in self._parse_prs(output):
             head = pr["headRefName"]
             if pr["isCrossRepository"] or head == current_head:
                 continue
-            if head == prefix or timestamped.fullmatch(head):
-                numbers.append(int(pr["number"]))
-        return numbers
+            if not labels and head != prefix and not timestamped.fullmatch(head):
+                continue
+            previous.append(self._to_previous_pr(pr))
+        return sorted(previous, key=lambda pr: pr.created_at, reverse=True)
+
+    def get_pr(self, number: int) -> PreviousPr:
+        output = self.runner(
+            [
+                "gh", "pr", "view", str(number),
+                "--json", "number,title,body,headRefName,createdAt",
+            ],
+            cwd=self.cwd,
+            capture=True,
+        )
+        return self._to_previous_pr(json.loads(output))
+
+    @staticmethod
+    def _to_previous_pr(pr: dict[str, Any]) -> PreviousPr:
+        return PreviousPr(
+            number=int(pr["number"]),
+            title=pr["title"],
+            body=pr["body"] or "",
+            head_branch=pr["headRefName"],
+            created_at=pr["createdAt"],
+        )
+
+    def edit_pr(self, number: int, title: str, body: str) -> None:
+        with self._body_file(body) as path:
+            self.runner(
+                ["gh", "pr", "edit", str(number), "--title", title, "--body-file", path],
+                cwd=self.cwd,
+            )
+
+    def api(self, endpoint: str) -> str:
+        return self.runner(["gh", "api", endpoint], cwd=self.cwd, capture=True)
+
+    @staticmethod
+    @contextmanager
+    def _body_file(body: str) -> Iterator[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "body.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            yield path
 
     @staticmethod
     def _parse_prs(output: str) -> list[dict[str, Any]]:
@@ -140,18 +195,19 @@ class GitHubClient:
             required = {"title": title, "body": body, "base": base, "head": head}
             missing = [name for name, value in required.items() if value is None]
             raise ValueError(f"pull request is missing: {', '.join(missing)}")
-        args = [
-            "gh", "pr", "create",
-            "--title", title,
-            "--body", body,
-            "--base", base,
-            "--head", head,
-        ]
-        if pr.reviewers:
-            args += ["-r", pr.reviewers]
-        # gh prints the new PR's URL. Without one, number stays None,
-        # which only matters if add_label is called later.
-        output = self.runner(args, cwd=self.cwd, capture=True)
+        with self._body_file(body) as body_path:
+            args = [
+                "gh", "pr", "create",
+                "--title", title,
+                "--body-file", body_path,
+                "--base", base,
+                "--head", head,
+            ]
+            if pr.reviewers:
+                args += ["-r", pr.reviewers]
+            # gh prints the new PR's URL. Without one, number stays None,
+            # which only matters if add_label is called later.
+            output = self.runner(args, cwd=self.cwd, capture=True)
         match = re.search(r"/pull/(\d+)\s*$", output)
         pr.number = int(match.group(1)) if match else None
         if output.strip():

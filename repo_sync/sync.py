@@ -5,8 +5,14 @@ import tempfile
 from pathlib import Path
 
 from repo_sync.commands import CommandError, Runner
+from repo_sync.describe import DescribeError, GeneratedDescription, HttpPost, generate_description
 from repo_sync.git import GitClient, GitHubClient
+from repo_sync.pr_body import build_body, build_title
+from repo_sync.previous_prs import PreviousPr
 from repo_sync.settings import Settings
+from repo_sync.source_diff import SourceDiffError, fetch_source_diff
+
+MAX_PREVIOUS_PRS = 10
 
 
 class SyncError(Exception):
@@ -14,9 +20,15 @@ class SyncError(Exception):
 
 
 class RepoSync:
-    def __init__(self, settings: Settings, runner: Runner | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        runner: Runner | None = None,
+        http_post: HttpPost | None = None,
+    ) -> None:
         self.settings = settings
         self.runner = runner
+        self.http_post = http_post
 
     def copy_files(self, clone_dir: str | Path) -> list[str]:
         s = self.settings
@@ -103,6 +115,30 @@ class RepoSync:
                     if existing.exists(follow_symlinks=False):
                         existing.unlink()
 
+    def _generate(
+        self,
+        git: GitClient,
+        github: GitHubClient,
+        previous_prs: list[PreviousPr],
+        synced_files: set[str],
+    ) -> GeneratedDescription:
+        source_diff = fetch_source_diff(
+            github.api,
+            self.settings.github_repository,
+            self.settings.github_sha,
+            self.settings.github_event_path,
+            synced_files,
+            self.settings.pr_description_exclude,
+        )
+        return generate_description(
+            api_key=self.settings.anthropic_api_key,
+            model=self.settings.anthropic_model,
+            previous_prs=previous_prs,
+            source_diff=source_diff,
+            diff_stat=git.diff_stat(),
+            http_post=self.http_post,
+        )
+
     def run(self, clone_dir: str | None = None) -> None:
         if clone_dir is not None:
             return self._run(clone_dir)
@@ -121,7 +157,7 @@ class RepoSync:
         git.clone(f"https://github.com/{self.settings.destination_repo}.git")
 
         print("Copying contents to git repo", flush=True)
-        self.copy_files(clone_dir)
+        synced_files = self.copy_files(clone_dir)
         git.checkout_new_branch(self.settings.head_branch)
 
         print("Adding git commit", flush=True)
@@ -137,24 +173,54 @@ class RepoSync:
         print("Pushing git commit", flush=True)
         git.push(self.settings.head_branch, force_with_lease=git.remote_branch_exists(self.settings.head_branch))
 
+        head = self.settings.head_branch
+        previous = github.list_previous_prs(
+            self.settings.head_branch_prefix, head, self.settings.labels
+        )
+        existing = github.find_open_pr(head)
+        described = list(previous)
+        if existing is not None:
+            described.insert(0, github.get_pr(existing))
+        described = described[:MAX_PREVIOUS_PRS]
+
+        section = (
+            f"Source commit: https://github.com/{self.settings.github_repository}"
+            f"/commit/{self.settings.github_sha}"
+        )
+        generated_title: str | None = None
+        generation_succeeded = False
+        if self.settings.generate_pr_description:
+            print("Generating pull request description", flush=True)
+            try:
+                generated = self._generate(git, github, described, set(synced_files))
+            except (SourceDiffError, DescribeError, CommandError) as exc:
+                print(
+                    f"::warning::could not generate the pull request description, using the default title and body: {exc}",
+                    flush=True,
+                )
+            else:
+                generated_title = generated.title
+                section = f"{generated.body}\n\n{section}"
+                generation_succeeded = True
+
         pr = github.new_pull_request()
-        pr.title = self.settings.head_branch
-        pr.body = self.settings.head_branch
+        pr.title = build_title(head, generated_title)
+        pr.body = build_body(described, section, generation_succeeded, head)
         pr.base = self.settings.base_branch
-        pr.head = self.settings.head_branch
+        pr.head = head
         pr.reviewers = self.settings.reviewers
-        existing = github.find_open_pr(self.settings.head_branch)
         if existing is None:
             print("Creating a pull request", flush=True)
             pr.create()
         else:
             pr.number = existing
             print("Pull request already open for this branch, reusing it", flush=True)
+            github.edit_pr(existing, pr.title, pr.body)
 
         # Only after the push and PR succeed, so a failure never leaves no PR open.
         print("Closing older PRs", flush=True)
-        for previous in github.list_previous_prs(self.settings.head_branch_prefix, self.settings.head_branch, []):
-            github.close_pr(previous.number)
+        for old in previous:
+            github.close_pr(old.number)
 
         # The number is unset when `gh pr create` printed no PR URL.
         if self.settings.labels and pr.number is None:

@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import TypedDict
 
 from repo_sync.commands import CommandError, Runner
+from repo_sync.describe import HttpPost
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync
 
@@ -86,10 +87,12 @@ class FlowTestCase(unittest.TestCase):
     def env(self, **overrides: str) -> dict[str, str]:
         return base_env(INPUT_SOURCE_FOLDER=self.src, **overrides)
 
-    def sync(self, runner: Runner, **overrides: str) -> tuple[str, str]:
+    def sync(
+        self, runner: Runner, http_post: HttpPost | None = None, **overrides: str
+    ) -> tuple[str, str]:
         settings = Settings.from_env(self.env(**overrides))
         clone = os.path.join(self.root, "clone")
         os.makedirs(clone, exist_ok=True)
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            RepoSync(settings, runner).run(clone_dir=clone)
+            RepoSync(settings, runner, http_post).run(clone_dir=clone)
         return clone, out.getvalue()

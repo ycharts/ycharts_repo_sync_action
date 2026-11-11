@@ -7,6 +7,7 @@ import unittest
 from collections.abc import Sequence
 
 from repo_sync.commands import CommandError
+from repo_sync.describe import HttpPost
 from repo_sync.settings import Settings
 from repo_sync.sync import RepoSync, SyncError
 from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
@@ -52,12 +53,12 @@ class RepoSyncTest(FlowTestCase):
                 ["git", "commit", "--message", "Update from https://github.com/org/source/commit/abc123"],
                 ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/sync-branch"],
                 ["git", "push", "-u", "origin", "HEAD:sync-branch"],
+                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
+                 "--limit", "100", "--json", LIST_FIELDS],
                 ["gh", "pr", "list", "--head", "sync-branch", "--state", "open",
                  "--json", "number,isCrossRepository"],
                 ["gh", "pr", "create", "--title", "sync-branch", "--body-file", mock.ANY,
                  "--base", "dev", "--head", "sync-branch", "-r", "r1,r2"],
-                ["gh", "pr", "list", "--search", "is:pr is:open sync-branch in:title",
-                 "--limit", "100", "--json", LIST_FIELDS],
                 ["gh", "pr", "close", "3"],
             ],
         )
@@ -149,19 +150,25 @@ class RepoSyncTest(FlowTestCase):
         return [c[3] for c in runner.commands if c[:3] == ["gh", "pr", "close"]]
 
     def test_push_then_create_then_close(self):
-        runner = FakeRunner(failures={("git", "diff"): 1})
+        runner = FakeRunner(
+            outputs={("gh", "pr", "list", "--search"): prs(("3", "sync-branch-20240101000000"))},
+            failures={("git", "diff"): 1},
+        )
         self.sync(runner)
         push = self.index(runner, "git", "push")
         create = self.index(runner, "gh", "pr", "create")
         listing = self.index(runner, "gh", "pr", "list", "--search")
-        self.assertLess(push, create)
-        self.assertLess(create, listing)
+        close = self.index(runner, "gh", "pr", "close")
+        self.assertLess(push, listing)
+        self.assertLess(listing, create)
+        self.assertLess(create, close)
 
     def test_reuses_open_pr_on_head_and_still_labels(self):
         runner = FakeRunner(
             outputs={
                 ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
-                ("gh", "pr", "list", "--search"): prs(("5", "sync-branch"), ("8", "sync-branch-20240101000000")),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "sync-branch", "sync-branch")),
+                ("gh", "pr", "list", "--state"): prs(("5", "sync-branch"), ("8", "other-branch")),
             },
             failures={("git", "diff"): 1},
         )
@@ -260,6 +267,160 @@ class RepoSyncTest(FlowTestCase):
         with self.assertRaises(SyncError) as ctx:
             RepoSync(settings).copy_files(self.root)
         self.assertIn("matched nothing", str(ctx.exception))
+
+
+SOURCE_LINE = "Source commit: https://github.com/org/source/commit/abc123"
+COMMIT_RESPONSE = json.dumps(
+    {"commit": {"message": "Change a"}, "files": [{"filename": "src/a.txt", "status": "modified", "patch": "+x"}]}
+)
+
+
+def anthropic_reply(title: str = "Update a", body: str = "Changed a.") -> bytes:
+    text = json.dumps({"title": title, "body": body})
+    return json.dumps({"stop_reason": "end_turn", "content": [{"type": "text", "text": text}]}).encode()
+
+
+def pr_json(number: int, head: str, title: str, body: str, created: str = "2024-01-01T00:00:00Z") -> dict:
+    return {
+        "number": number,
+        "title": title,
+        "body": body,
+        "headRefName": head,
+        "createdAt": created,
+        "isCrossRepository": False,
+    }
+
+
+class DescriptionTest(FlowTestCase):
+    def setUp(self):
+        super().setUp()
+        self.requests: list[dict] = []
+
+    def http_post(self, url: str, headers: dict[str, str], body: bytes) -> bytes:
+        self.requests.append(json.loads(body))
+        return anthropic_reply()
+
+    def runner(self, outputs: dict[tuple[str, ...], str] | None = None, **kwargs) -> FakeRunner:
+        return FakeRunner(
+            outputs={("gh", "api"): COMMIT_RESPONSE, **CREATED, **(outputs or {})},
+            failures={("git", "diff"): 1},
+            **kwargs,
+        )
+
+    def run_capturing(
+        self, runner: FakeRunner, http_post: HttpPost | None = None, **overrides: str
+    ) -> tuple[list[tuple[list[str], str]], str]:
+        captured: list[tuple[list[str], str]] = []
+        original = FakeRunner.__call__
+
+        def spy(self_, args, cwd=None, capture=False):
+            args = list(args)
+            if "--body-file" in args:
+                with open(args[args.index("--body-file") + 1], encoding="utf-8") as f:
+                    captured.append((args, f.read()))
+            return original(self_, args, cwd, capture)
+
+        with mock.patch.object(FakeRunner, "__call__", spy):
+            _, out = self.sync(runner, http_post or self.http_post, **overrides)
+        return captured, out
+
+    def closed(self, runner: FakeRunner) -> list[str]:
+        return [c[3] for c in runner.commands if c[:3] == ["gh", "pr", "close"]]
+
+    def generation(self, **overrides: str) -> dict[str, str]:
+        return {"INPUT_GENERATE_PR_DESCRIPTION": "true", "ANTHROPIC_API_KEY": "sk-secret", **overrides}
+
+    def test_generation_off_makes_no_api_calls_and_uses_branch_as_body(self):
+        runner = self.runner()
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertNotIn(["gh", "api"], [c[:2] for c in runner.commands])
+        self.assertEqual(self.requests, [])
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, "sync-branch")
+
+    def test_generation_off_appends_source_commit_to_previous_body(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "t3", "Older body")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        [(args, body)], _ = self.run_capturing(runner)
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, f"Older body\n\n---\n\n{SOURCE_LINE}")
+
+    def test_generation_on_prefixes_title_and_appends_body(self):
+        runner = self.runner()
+        [(args, body)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch: Update a")
+        self.assertEqual(body, f"Changed a.\n\n{SOURCE_LINE}")
+        self.assertEqual(len(self.requests), 1)
+
+    def test_generation_on_passes_previous_prs_to_claude(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "Old title", "Older body")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        [(_, body)], _ = self.run_capturing(runner, **self.generation())
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertIn("Pull request #3: Old title", prompt)
+        self.assertIn("Older body", prompt)
+        self.assertEqual(body, f"Older body\n\n---\n\nChanged a.\n\n{SOURCE_LINE}")
+
+    def test_previous_prs_given_to_claude_are_capped_at_ten(self):
+        listing = json.dumps(
+            [pr_json(n, f"sync-branch-2024010100{n:04d}", f"title{n}", "b", f"2024-01-{n:02d}T00:00:00Z") for n in range(1, 13)]
+        )
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        self.run_capturing(runner, **self.generation())
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertEqual(prompt.count("### Pull request #"), 10)
+        self.assertEqual(self.closed(runner), [str(n) for n in range(12, 0, -1)])
+
+    def test_generation_failure_warns_and_falls_back(self):
+        def failing(url: str, headers: dict[str, str], body: bytes) -> bytes:
+            raise OSError("boom")
+
+        captured, out = self.run_capturing(self.runner(), failing, **self.generation())
+        [(args, body)] = captured
+        self.assertIn("::warning::could not generate the pull request description", out)
+        self.assertNotIn("sk-secret", out)
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch")
+        self.assertEqual(body, "sync-branch")
+
+    def test_source_diff_failure_warns_and_falls_back(self):
+        runner = FakeRunner(outputs=CREATED, failures={("git", "diff"): 1, ("gh", "api"): 1})
+        _, out = self.sync(runner, self.http_post, **self.generation())
+        self.assertIn("::warning::could not generate the pull request description", out)
+        self.assertEqual(self.requests, [])
+        self.assertTrue([c for c in runner.commands if c[:3] == ["gh", "pr", "create"]])
+
+    def test_reused_pr_is_edited_with_appended_body(self):
+        runner = self.runner(
+            {
+                ("gh", "pr", "list", "--head"): json.dumps([{"number": 5, "isCrossRepository": False}]),
+                ("gh", "pr", "view"): json.dumps(pr_json(5, "sync-branch", "sync-branch: Old", "Current body")),
+            }
+        )
+        [(args, body)], _ = self.run_capturing(runner, **self.generation())
+        self.assertEqual(args[:4], ["gh", "pr", "edit", "5"])
+        self.assertEqual(args[args.index("--title") + 1], "sync-branch: Update a")
+        self.assertEqual(body, f"Current body\n\n---\n\nChanged a.\n\n{SOURCE_LINE}")
+        self.assertFalse([c for c in runner.commands if c[:3] == ["gh", "pr", "create"]])
+        prompt = self.requests[0]["messages"][0]["content"]
+        self.assertIn("Pull request #5: sync-branch: Old", prompt)
+
+    def test_label_mode_closes_label_matches(self):
+        listing = json.dumps([pr_json(7, "unrelated-branch", "t7", "b7")])
+        runner = self.runner({("gh", "pr", "list", "--state"): listing})
+        self.sync(runner, self.http_post, INPUT_PULL_REQUEST_LABELS="sync")
+        self.assertEqual(self.closed(runner), ["7"])
+        self.assertIn(
+            ["gh", "pr", "list", "--state", "open", "--label", "sync", "--limit", "100", "--json", LIST_FIELDS],
+            runner.commands,
+        )
+
+    def test_previous_prs_closed_after_create(self):
+        listing = json.dumps([pr_json(3, "sync-branch-20240101000000", "t3", "b3")])
+        runner = self.runner({("gh", "pr", "list", "--search"): listing})
+        self.sync(runner, self.http_post)
+        create = next(i for i, c in enumerate(runner.commands) if c[:3] == ["gh", "pr", "create"])
+        close = next(i for i, c in enumerate(runner.commands) if c[:3] == ["gh", "pr", "close"])
+        self.assertLess(create, close)
 
 
 class CopyFilesTest(unittest.TestCase):

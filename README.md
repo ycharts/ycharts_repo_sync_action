@@ -111,7 +111,6 @@ The action is written in Python using only the standard library. Run the tests f
 - `settings.py`: `Settings` and `ConfigError`
 - `source_diff.py`: finds the push's base commit from the event payload and builds the filtered diff, applying the exclude globs
 - `describe.py`: builds the Anthropic API request and parses the generated title and body
-- `pr_body.py`: builds the pull request title and the accumulated body
-- `sync.py`: `RepoSync` (including copying source files into the clone) and `SyncError`
+- `sync.py`: `RepoSync` (including copying source files into the clone and building the pull request title and body) and `SyncError`
 
 The tests in `tests/` mirror these modules.

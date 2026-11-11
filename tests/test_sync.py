@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 from repo_sync.commands import CommandError
 from repo_sync.describe import HttpPost
+from repo_sync.git import PreviousPr
 from repo_sync.settings import Settings
-from repo_sync.sync import RepoSync, SyncError
+from repo_sync.sync import MAX_BODY_BYTES, RepoSync, SyncError
 from tests.helpers import FakeRunner, FlowTestCase, base_env, patch_github_token
 
 
@@ -653,26 +654,118 @@ class CopyFilesTest(unittest.TestCase):
         self.write(os.path.join(self.src, "d", "e", "c.txt"))
         self.assertEqual(self.copy("a.txt\nd"), ["a.txt", "d/b.txt", "d/e/c.txt"])
 
-    def test_paths_are_relative_to_the_checkout_root(self):
-        self.write(os.path.join(self.src, "docs", "a.txt"))
-        os.makedirs(os.path.join(self.root, ".git"))
-        self.assertEqual(self.copy("docs"), ["src/docs/a.txt"])
+    def copy_in_workspace(self, workspace: str, source_folder: str, files: str) -> list[str]:
+        settings = Settings.from_env(
+            base_env(INPUT_SOURCE_FOLDER=source_folder, INPUT_SOURCE_FILES=files)
+        )
+        with mock.patch("pathlib.Path.cwd", return_value=Path(workspace)):
+            return RepoSync(settings).copy_files(self.clone)
 
-    def test_nested_checkout_ignores_cwd_without_git(self):
-        app = os.path.join(self.root, "workspace", "app")
+    def test_paths_are_relative_to_the_checkout_root(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "src", "docs", "a.txt"))
+        os.makedirs(os.path.join(workspace, ".git"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "src"), "docs")
+        self.assertEqual(copied, ["src/docs/a.txt"])
+
+    def test_nested_checkout_inside_workspace(self):
+        workspace = os.path.join(self.root, "workspace")
+        app = os.path.join(workspace, "app")
         self.write(os.path.join(app, "docs", "a.txt"))
         os.makedirs(os.path.join(app, ".git"))
-        settings = Settings.from_env(
-            base_env(INPUT_SOURCE_FOLDER=os.path.join(app, "docs"), INPUT_SOURCE_FILES="a.txt")
-        )
-        with mock.patch("pathlib.Path.cwd", return_value=Path(self.root, "workspace")):
-            copied = RepoSync(settings).copy_files(self.clone)
+        copied = self.copy_in_workspace(workspace, os.path.join(app, "docs"), "a.txt")
         self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_git_above_workspace_is_ignored(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "docs", "a.txt"))
+        os.makedirs(os.path.join(self.root, ".git"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "docs"), "a.txt")
+        self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_falls_back_to_workspace_without_git(self):
+        workspace = os.path.join(self.root, "workspace")
+        self.write(os.path.join(workspace, "docs", "a.txt"))
+        copied = self.copy_in_workspace(workspace, os.path.join(workspace, "docs"), "a.txt")
+        self.assertEqual(copied, ["docs/a.txt"])
+
+    def test_source_outside_workspace_falls_back_to_source_folder(self):
+        workspace = os.path.join(self.root, "workspace")
+        os.makedirs(workspace)
+        self.write(os.path.join(self.src, "a.txt"))
+        os.makedirs(os.path.join(self.root, ".git"))
+        copied = self.copy_in_workspace(workspace, self.src, "a.txt")
+        self.assertEqual(copied, ["a.txt"])
 
     def test_returned_paths_include_symlinks_in_directory(self):
         self.write(os.path.join(self.src, "d", "a.txt"))
         os.symlink("a.txt", os.path.join(self.src, "d", "link.txt"))
         self.assertEqual(self.copy("d"), ["d/a.txt", "d/link.txt"])
+
+
+def make_pr(number: int, body: str, head_branch: str = "sync/x") -> PreviousPr:
+    return PreviousPr(
+        number=number,
+        title=f"t{number}",
+        body=body,
+        head_branch=head_branch,
+        created_at="2024-01-01T00:00:00Z",
+    )
+
+
+class BuildTitleTest(unittest.TestCase):
+    def test_with_generated_title(self):
+        self.assertEqual(RepoSync.build_title("main", "Add thing"), "main: Add thing")
+
+    def test_without_generated_title(self):
+        self.assertEqual(RepoSync.build_title("main", None), "main")
+        self.assertEqual(RepoSync.build_title("main", ""), "main")
+
+
+class BuildBodyTest(unittest.TestCase):
+    def test_picks_newest_real_body(self):
+        prs = [make_pr(3, "newest"), make_pr(2, "older")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "newest\n\n---\n\nS")
+
+    def test_skips_blank_and_branch_name_bodies(self):
+        prs = [
+            make_pr(4, ""),
+            make_pr(3, " \n\t "),
+            make_pr(2, "  sync/x \n", head_branch=" sync/x"),
+            make_pr(1, "real"),
+        ]
+        self.assertEqual(RepoSync.build_body(prs, "S", False, "b"), "real\n\n---\n\nS")
+
+    def test_branch_name_body_of_other_branch_is_real(self):
+        prs = [make_pr(1, "other", head_branch="sync/x")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "other\n\n---\n\nS")
+
+    def test_separator_layout_trims_trailing_whitespace(self):
+        prs = [make_pr(1, "body\n\n")]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "body\n\n---\n\nS")
+
+    def test_size_cap_boundary(self):
+        section = "S"
+        overhead = len("\n\n---\n\n") + len(section)
+        at_cap = make_pr(7, "a" * (MAX_BODY_BYTES - overhead))
+        over_cap = make_pr(7, "a" * (MAX_BODY_BYTES - overhead + 1))
+        self.assertEqual(
+            len(RepoSync.build_body([at_cap], section, True, "b").encode()), MAX_BODY_BYTES
+        )
+        self.assertEqual(
+            RepoSync.build_body([over_cap], section, True, "b"), "Earlier updates: #7\n\nS"
+        )
+
+    def test_size_cap_counts_utf8_bytes(self):
+        prs = [make_pr(9, "é" * (MAX_BODY_BYTES // 2))]
+        self.assertEqual(RepoSync.build_body(prs, "S", True, "b"), "Earlier updates: #9\n\nS")
+
+    def test_falls_back_to_section_when_generation_succeeded(self):
+        self.assertEqual(RepoSync.build_body([], "S", True, "b"), "S")
+        self.assertEqual(RepoSync.build_body([make_pr(1, "b", head_branch="b")], "S", True, "b"), "S")
+
+    def test_falls_back_to_branch_when_generation_failed(self):
+        self.assertEqual(RepoSync.build_body([], "Source commit: x", False, "feat"), "feat")
 
 
 if __name__ == "__main__":

@@ -7,11 +7,11 @@ from pathlib import Path
 from repo_sync.commands import CommandError, Runner
 from repo_sync.describe import DescribeError, GeneratedDescription, HttpPost, PrDescriber
 from repo_sync.git import GitClient, GitHubClient, PreviousPr
-from repo_sync.pr_body import build_body, build_title
 from repo_sync.settings import Settings
 from repo_sync.source_diff import SourceDiffError, before_sha, build_source_diff
 
 MAX_PREVIOUS_PRS = 10
+MAX_BODY_BYTES = 60000
 
 
 class SyncError(Exception):
@@ -88,10 +88,48 @@ class RepoSync:
         # Copied paths must match the file names GitHub reports for the source push,
         # which are relative to the repository root.
         # Walks up for .git rather than running git, so copying makes no runner calls.
-        for candidate in (source_root, *source_root.parents):
-            if (candidate / ".git").exists():
-                return candidate
+        workspace = Path.cwd().resolve()
+        inside_workspace = source_root.is_relative_to(workspace)
+        if inside_workspace:
+            for candidate in (source_root, *source_root.parents):
+                if (candidate / ".git").exists():
+                    return candidate
+                if candidate == workspace:
+                    break
+            return workspace
         return source_root
+
+    @staticmethod
+    def build_title(branch: str, generated_title: str | None) -> str:
+        if generated_title:
+            return f"{branch}: {generated_title}"
+        return branch
+
+    @staticmethod
+    def _newest_real_body(previous_prs: list[PreviousPr]) -> PreviousPr | None:
+        # A body equal to the head branch is the default placeholder, not a description.
+        for pr in previous_prs:
+            body = pr.body.strip()
+            if body and body != pr.head_branch.strip():
+                return pr
+        return None
+
+    @staticmethod
+    def build_body(
+        previous_prs: list[PreviousPr],
+        section: str,
+        generation_succeeded: bool,
+        branch: str,
+    ) -> str:
+        previous = RepoSync._newest_real_body(previous_prs)
+        if previous is not None:
+            body = f"{previous.body.rstrip()}\n\n---\n\n{section}"
+            if len(body.encode("utf-8")) > MAX_BODY_BYTES:
+                return f"Earlier updates: #{previous.number}\n\n{section}"
+            return body
+        if generation_succeeded:
+            return section
+        return branch
 
     @staticmethod
     def _copy_file(source: str | Path, target: str | Path) -> None:
@@ -208,8 +246,8 @@ class RepoSync:
                 generation_succeeded = True
 
         pr = github.new_pull_request()
-        pr.title = build_title(head, generated_title)
-        pr.body = build_body(described, section, generation_succeeded, head)
+        pr.title = self.build_title(head, generated_title)
+        pr.body = self.build_body(described, section, generation_succeeded, head)
         pr.base = self.settings.base_branch
         pr.head = head
         pr.reviewers = self.settings.reviewers
